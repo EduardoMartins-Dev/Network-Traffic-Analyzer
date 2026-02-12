@@ -26,7 +26,7 @@ Este documento descreve o plano de evolução do projeto, dividido em fases incr
     - [ ] Implementar aritmética de ponteiros para navegar pelos cabeçalhos.
     - [ ] Extrair e imprimir: `[PROTOCOLO] IP_Origem -> IP_Destino : Porta`.
 
-## ⚙️ Fase 3: Escalabilidade (Multithreading)
+## ⚙️ Fase 3: Escalabilidade (Multithreading) - OPCIONAL 
 **Objetivo:** Desacoplar a captura da análise para alta performance.
 
 - [ ] **Arquitetura Produtor-Consumidor:**
