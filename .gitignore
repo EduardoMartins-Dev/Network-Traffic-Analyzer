@@ -2,3 +2,5 @@
 .vscode/tasks.json
 .gitignore
 .idea
+/cmake
+/cmake-build-debug3
