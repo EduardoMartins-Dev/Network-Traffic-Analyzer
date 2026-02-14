@@ -6,7 +6,6 @@
 #include "../../include/analyzer.h"
 
 void packet_handler(u_char *args, const struct pcap_pkthdr *header, const u_char *packet) {
-    // Passa a bola para o módulo de análise (analyzer.c)
     analyze_packet(packet, header->len);
 }
 

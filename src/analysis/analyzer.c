@@ -42,8 +42,6 @@ void analyze_packet(const u_char *packet, int packet_length) {
 
     if (ip_header->ip_p == IPPROTO_TCP) {
         struct tcphdr *tcp = (struct tcphdr *)transport_header_start;
-
-        // CORREÇÃO AQUI: Trocamos 'len' por 'packet_length'
         export_to_json(src_ip, ntohs(tcp->th_sport),
             dst_ip, ntohs(tcp->th_dport),
             "TCP", packet_length);
@@ -51,12 +49,10 @@ void analyze_packet(const u_char *packet, int packet_length) {
     } else if (ip_header->ip_p == IPPROTO_UDP) {
         struct udphdr *udp = (struct udphdr *)transport_header_start;
 
-        // CORREÇÃO AQUI TAMBÉM
         export_to_json(src_ip, ntohs(udp->uh_sport),
             dst_ip, ntohs(udp->uh_dport),
             "UDP", packet_length);
     }
 
-    // Incrementa contador (opcional, mas boa prática)
     packets_analyzed++;
 }

@@ -4,3 +4,5 @@
 .idea
 /cmake
 /cmake-build-debug3
+traffic_log.txt
+.gitignore
