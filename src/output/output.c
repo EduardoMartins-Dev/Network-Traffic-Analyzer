@@ -22,7 +22,6 @@ void export_to_json(const char *src_ip, int src_port, const char *dst_ip, int ds
     }
 
     //PREENCHE O JSON
-    // Metadados do Sensor
     cJSON_AddStringToObject(root, "sensor_id", "teste");
     cJSON_AddStringToObject(root, "timestamp", "auto-generated"); // Futuramente colocaremos hora real
 

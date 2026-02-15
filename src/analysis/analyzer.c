@@ -10,21 +10,20 @@
 static unsigned long packets_analyzed = 0;
 
 void init_analyzer(void) {
-    printf("[ANALYZER] Módulo de análise inicializado\n");
     packets_analyzed = 0;
 }
 
 // O argumento aqui se chama 'packet_length'
 void analyze_packet(const u_char *packet, int packet_length) {
 
-    // 1. ETHERNET MAPPING
+    // ETHERNET MAPPING
     struct ether_header * eth_header = (struct ether_header *)packet;
 
     if (ntohs(eth_header->ether_type) != ETHERTYPE_IP) {
         return;
     }
 
-    // 2. MAPEAR O CABEÇALHO IP
+    // MAPEAR O CABEÇALHO IP
     const u_char *ip_header_start = packet + ETHER_HDR_LEN;
     struct ip *ip_header = (struct ip *)ip_header_start;
 
@@ -37,7 +36,7 @@ void analyze_packet(const u_char *packet, int packet_length) {
     // Calcula o tam. do cabeçalho ip
     int ip_header_len = ip_header->ip_hl * 4;
 
-    // 3. TRANSPORTE TCP/UDP
+    // TRANSPORTE TCP/UDP
     const u_char *transport_header_start = ip_header_start + ip_header_len;
 
     if (ip_header->ip_p == IPPROTO_TCP) {
