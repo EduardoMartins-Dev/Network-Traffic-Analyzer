@@ -6,25 +6,25 @@
 ![Docker](https://img.shields.io/badge/Docker-Infrastructure-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
-O **Network Traffic Analyzer** é um sistema de monitoramento de rede de alta performance desenvolvido **100% em C**.
+O **Network Traffic Analyzer** é um sistema de monitoramento de rede de alta performance desenvolvido **100% em C (C11)**.
 
-Diferente de sniffers tradicionais monolíticos, este projeto utiliza uma **Arquitetura de Microsserviços** orientada a eventos. Ele desacopla a captura de pacotes do processamento de banco de dados usando filas de mensagens (AMQP), garantindo que o sniffer nunca perca pacotes (*packet loss*) mesmo quando o banco de dados estiver sob carga pesada.
+Diferente de sniffers tradicionais monolíticos, este projeto utiliza uma **Arquitetura de Microsserviços orientada a eventos**. Ele desacopla a captura de pacotes do processamento de banco de dados usando filas de mensagens (AMQP), garantindo que o sniffer nunca perca pacotes (*packet loss*) mesmo quando o banco de dados estiver sob carga pesada.
 
 ---
 
-## ⚠️ Aviso de Segurança e Ética
+# ⚠️ Aviso de Segurança e Ética
 
 > **IMPORTANTE:** Este software foi desenvolvido estritamente para fins educacionais e de pesquisa em segurança defensiva (Blue Team).
 >
-> * **Ambiente de Execução:** Deve ser operado exclusivamente em redes laboratoriais isoladas, redes privadas autorizadas ou localhost.
-> * **Propósito:** O objetivo é estudar a pilha TCP/IP, entender o funcionamento de filas de mensagens (Message Brokers) e praticar C em baixo nível.
-> * **Isenção de Responsabilidade:** O autor não se responsabiliza pelo uso indevido deste código para monitoramento não autorizado.
+> - **Ambiente de Execução:** Deve ser operado exclusivamente em redes laboratoriais isoladas, redes privadas autorizadas ou localhost.
+> - **Propósito:** Estudar a pilha TCP/IP, compreender o funcionamento de Message Brokers e praticar C em baixo nível.
+> - **Isenção de Responsabilidade:** O autor não se responsabiliza pelo uso indevido para monitoramento não autorizado.
 
 ---
 
-## 🏗️ Arquitetura do Sistema
+# 🏗️ Arquitetura do Sistema
 
-O projeto adota o padrão **Producer-Consumer** distribuído.
+O projeto adota o padrão **Producer-Consumer distribuído**.
 
 ```mermaid
 flowchart LR
@@ -49,54 +49,56 @@ flowchart LR
     B -->|JSON via AMQP| C
     C -->|HTTP Line Protocol| D
     D --> E
+```
 
-Fluxo de Dados
+---
 
-    NetworkTrafficAnalyzer (Produtor):
+# 🔄 Fluxo de Dados
 
-        Captura bruta via libpcap (Promiscuous Mode).
+## 1️⃣ NetworkTrafficAnalyzer (Produtor)
 
-        Analisa cabeçalhos Ethernet, IP, TCP/UDP.
+- Captura bruta via **libpcap** (Promiscuous Mode).
+- Analisa cabeçalhos **Ethernet, IP, TCP/UDP**.
+- Serializa os dados para **JSON**.
+- Publica na fila `traffic_queue` do RabbitMQ.
 
-        Serializa os dados para JSON.
+## 2️⃣ RabbitMQ (Broker)
 
-        Publica na fila traffic_queue do RabbitMQ.
+- Atua como buffer de alta performance.
+- Garante persistência temporária caso o consumidor caia.
 
-    RabbitMQ (Broker):
+## 3️⃣ DataIngestor (Consumidor)
 
-        Atua como buffer de alta performance.
+- Serviço autônomo em C executando em loop infinito.
+- Consome mensagens da fila.
+- Converte JSON para **Influx Line Protocol**.
+- Envia para o banco via **HTTP (libcurl)**.
 
-        Garante a persistência temporária se o consumidor cair.
+## 4️⃣ Visualização
 
-    DataIngestor (Consumidor):
+- **InfluxDB:** Armazena séries temporais.
+- **Grafana:** Renderiza gráficos de throughput, protocolos e alertas.
 
-        Serviço autônomo em C que roda em loop infinito.
+---
 
-        Consome mensagens da fila.
+# 💻 Tech Stack
 
-        Converte JSON para Influx Line Protocol.
+| Componente | Tecnologia | Descrição |
+|------------|------------|------------|
+| Linguagem Core | C (C11) | Performance crítica e gestão manual de memória |
+| Captura | libpcap | Biblioteca padrão para captura de pacotes |
+| Mensageria | RabbitMQ-C | Cliente AMQP para comunicação assíncrona |
+| Requisições HTTP | libcurl | Cliente HTTP para enviar dados ao InfluxDB |
+| Parsing JSON | cJSON | Serialização e deserialização |
+| Database | InfluxDB | Banco NoSQL otimizado para Time Series |
+| Dashboard | Grafana | Interface visual para análise |
+| Infraestrutura | Docker Compose | Orquestração dos containers |
 
-        Envia para o banco via HTTP (libcurl).
+---
 
-    Visualização:
+# 📂 Estrutura de Diretórios
 
-        InfluxDB: Armazena séries temporais.
-
-        Grafana: Renderiza gráficos de throughput, protocolos e alertas.
-
-💻 Tech Stack
-Componente	Tecnologia	Descrição
-Linguagem Core	C (C11)	Performance crítica e gestão de memória.
-Captura	libpcap	Biblioteca padrão para captura de pacotes.
-Mensageria	RabbitMQ-C	Cliente AMQP para comunicação assíncrona.
-Requisições	libcurl	Cliente HTTP para enviar dados ao InfluxDB.
-Parsing	cJSON	Serialização e Deserialização de objetos JSON.
-Database	InfluxDB	Banco NoSQL otimizado para Time Series.
-Dashboard	Grafana	Interface visual para o analista.
-Infra	Docker Compose	Orquestração dos containers.
-📂 Estrutura de Diretórios
-Plaintext
-
+```
 Network-Traffic-Analyzer/
 ├── cmake-build-debug/   # Executáveis gerados
 ├── include/             # Headers (.h)
@@ -108,70 +110,102 @@ Network-Traffic-Analyzer/
 ├── src/                 # Código Fonte (.c)
 │   ├── analysis/        # Implementação da análise
 │   ├── capture/         # Implementação da captura
-│   ├── ingestor/        # [NOVO] O Consumidor Rabbit -> Influx
+│   ├── ingestor/        # Consumidor Rabbit -> Influx
 │   ├── output/          # Serialização e envio
-│   └── main.c           # O Sniffer Principal
-├── docker-compose.yml   # Infraestrutura (Rabbit+Influx+Grafana)
+│   └── main.c           # Sniffer Principal
+├── docker-compose.yml   # Infraestrutura (Rabbit + Influx + Grafana)
 ├── CMakeLists.txt       # Configuração de Build
 └── README.md            # Documentação
+```
 
-🛠️ Pré-requisitos e Instalação
+---
 
-O sistema foi desenhado para Linux (Ubuntu/Debian/Kali).
-1. Dependências do Sistema
-Bash
+# 🛠️ Pré-requisitos e Instalação
 
+Sistema alvo: **Linux (Ubuntu / Debian / Kali)**
+
+## 1️⃣ Dependências do Sistema
+
+```bash
 # Compiladores e ferramentas
 sudo apt update
 sudo apt install build-essential cmake git
 
-# Bibliotecas de desenvolvimento (Headers)
+# Bibliotecas de desenvolvimento
 sudo apt install libpcap-dev librabbitmq-dev libcurl4-openssl-dev
 
-# Docker e Plugin Compose
+# Docker e Compose
 sudo apt install docker.io docker-compose-plugin
+```
 
-2. Compilação (CMake)
-Bash
+---
 
-mkdir build && cd build
+## 2️⃣ Compilação (CMake)
+
+```bash
+mkdir build
+cd build
 cmake ..
 make
+```
 
-Isso irá gerar dois executáveis: NetworkTrafficAnalyzer e DataIngestor.
-▶️ Como Rodar (Passo a Passo)
+Executáveis gerados:
 
-Para o sistema funcionar, você precisa rodar 3 componentes simultaneamente (recomenda-se 3 terminais).
-Passo 1: Subir a Infraestrutura (Docker)
+- `NetworkTrafficAnalyzer`
+- `DataIngestor`
+
+---
+
+# ▶️ Como Rodar (Passo a Passo)
+
+É necessário executar **3 componentes simultaneamente** (recomenda-se 3 terminais).
+
+---
+
+## 🔹 Passo 1: Subir a Infraestrutura
 
 Na raiz do projeto:
-Bash
 
+```bash
 sudo docker compose up -d
+```
 
-Aguarde os containers ficarem "Started".
-Passo 2: Iniciar o Consumidor (Ingestor)
+Aguarde até que todos os containers estejam com status `Started`.
 
-Este serviço processa a fila.
-Bash
+---
 
+## 🔹 Passo 2: Iniciar o Consumidor (Ingestor)
+
+```bash
 cd build
 ./DataIngestor
+```
 
-Passo 3: Iniciar o Sniffer (Produtor)
+---
 
-Este serviço captura a rede (requer root).
-Substitua wlp2s0 pela sua interface de rede.
-Bash
+## 🔹 Passo 3: Iniciar o Sniffer (Produtor)
 
+Substitua `wlp2s0` pela sua interface de rede.
+
+```bash
 cd build
 sudo ./NetworkTrafficAnalyzer wlp2s0
+```
 
-📊 Acessando os Dashboards
-Serviço	URL	Usuário	Senha
-RabbitMQ Admin	http://localhost:15672	guest	guest
-InfluxDB UI	http://localhost:8086	admin	adminpassword123
-Grafana	http://localhost:3000	admin	admin
-📝 Licença
+---
 
-Este projeto é open-source e distribuído sob a licença MIT. Sinta-se livre para contribuir, fazer forks e abrir Pull Requests.
+# 📊 Acessando os Dashboards
+
+| Serviço | URL | Usuário | Senha |
+|----------|------|----------|--------|
+| RabbitMQ Admin | http://localhost:15672 | guest | guest |
+| InfluxDB UI | http://localhost:8086 | admin | adminpassword123 |
+| Grafana | http://localhost:3000 | admin | admin |
+
+---
+
+# 📝 Licença
+
+Distribuído sob a **Licença MIT**.
+
+Sinta-se livre para contribuir, criar forks e abrir Pull Requests.
