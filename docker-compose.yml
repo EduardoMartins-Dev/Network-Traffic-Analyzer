@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # RABBITMQ
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    hostname: rabbitmq
+    restart: always
+    ports:
+      # LADO ESQUERDO É A PORTA DO SEU UBUNTU
+      - "5674:5672"   # Mudei para 5674. No seu código C/Python, use port=5674
+      - "15673:15672" # Painel Web. Acesse em http://localhost:15673
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+
+  # INFLUXDB (Mantido igual)
+  influxdb:
+    image: influxdb:2.7
+    container_name: influxdb
+    restart: always
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=adminpassword123
+      - DOCKER_INFLUXDB_INIT_ORG=cybersecurity
+      - DOCKER_INFLUXDB_INIT_BUCKET=network_traffic
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=my-super-secret-auth-token
+
+  # GRAFANA (Mantido igual)
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    restart: always
+    ports:
+      - "3000:3000"
+    depends_on:
+      - influxdb
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin

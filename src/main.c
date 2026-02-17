@@ -1,28 +1,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-
+#include "../include/publisher.h"
 #include "../include/capture.h"
 
 int main(int argc, char *argv[]) {
-    printf("========================================\n");
-    printf("    NETWORK TRAFFIC ANALYZER v0.1   \n");
-    printf("      [Monitorando Camadas 2, 3 e 4]  \n");
-    printf("========================================\n");
 
-    char *interface_name = "lo";
-
-    if (argc > 1) {
-        interface_name = argv[1];
+    if (argc != 2) {
+        printf("Uso: %s <interface>\n", argv[0]);
+        return 1;
     }
 
-    printf(" Interface Alvo: %s\n", interface_name);
-    printf("Iniciando motor de captura... (Pressione Ctrl+C para parar)\n");
+    printf("Iniciando sniffer (Pressione Ctrl+C para parar)\n");
 
     // Start sniffer
-    start_sniffer(interface_name);
+    init_queue();
 
-    printf(" Encerrando.\n");
+    start_sniffer(argv[1]);
+
+    close_queue();
     return 0;
 }
