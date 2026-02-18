@@ -198,7 +198,7 @@ sudo ./NetworkTrafficAnalyzer wlp2s0
 
 | Serviço | URL | Usuário | Senha |
 |----------|------|----------|--------|
-| RabbitMQ Admin | http://localhost:15672 | guest | guest |
+| RabbitMQ Admin | http://localhost:15673 | guest | guest |
 | InfluxDB UI | http://localhost:8086 | admin | adminpassword123 |
 | Grafana | http://localhost:3000 | admin | admin |
 
