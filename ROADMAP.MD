@@ -1,82 +1,57 @@
-# 🗺️ Roadmap: Network Traffic Analyzer (Enterprise Architecture)
+# 🗺️ Roadmap: Network Traffic Analyzer (SOC Edition)
 
-Este documento descreve o plano de evolução do projeto **Network Traffic Analyzer**, focado em alta performance, escalabilidade e desacoplamento de serviços utilizando uma **Arquitetura Orientada a Eventos (EDA)**.
+Este documento descreve a evolução do projeto **Network Traffic Analyzer**. Saímos de um sniffer básico para uma arquitetura de microsserviços focada em detecção de intrusão (IDS) em tempo real.
 
 ---
 
-## 🏁 Fase 1: Fundação e Captura (The Sniffer)
-**Objetivo:** Estabelecer o ambiente de desenvolvimento e garantir que o código em C consiga "enxergar" e interagir com a interface de rede via `libpcap`.
+## ✅ Fase 1: Fundação e Captura (The Sniffer)
+**Objetivo:** Garantir a captura de pacotes brutos e interação com a interface de rede.
 
-- [ ] **Configuração do Lab:**
-    - [ ] Subir VM Kali Linux (Monitor) e VM Alvo.
-    - [ ] Garantir conectividade isolada (Host-only/NAT Network).
-- [ ] **Hello World Libpcap:**
-    - [ ] Inicializar dispositivo de rede em modo promíscuo.
-    - [ ] Implementar loop de captura simples (`pcap_loop`).
-    - [ ] Imprimir mensagem no terminal a cada pacote recebido.
-- [ ] **Filtros BPF (Berkeley Packet Filter):**
-    - [ ] Aplicar filtros para ignorar tráfego SSH (porta 22).
-    - [ ] Focar a captura apenas em protocolos de interesse (TCP/UDP/ICMP).
+- [x] **Hello World Libpcap:** Inicialização de dispositivo em modo promíscuo e loop de captura.
+- [x] **Filtros BPF:** Implementação de filtros para focar em protocolos de interesse (TCP/UDP/ICMP).
+- [x] **Aritmética de Ponteiros:** Lógica para "pular" cabeçalhos e extrair dados formatados.
 
-## 🧠 Fase 2: O Motor de Análise (Protocol Dissector)
-**Objetivo:** Traduzir bytes brutos (*Raw Data*) capturados do cabo de rede em informações estruturadas e legíveis.
+## ✅ Fase 2: Camada de Mensageria (Middleware)
+**Objetivo:** Desacoplar a captura do armazenamento para garantir alta performance.
 
-- [ ] **Estruturas de Dados (Structs):**
-    - [ ] Mapear cabeçalho Ethernet (MAC Address).
-    - [ ] Mapear cabeçalho IP (IP Src/Dst, TTL, Protocolo).
-    - [ ] Mapear cabeçalho TCP/UDP (Portas, Flags).
-- [ ] **Aritmética de Ponteiros:**
-    - [ ] Implementar lógica matemática para "pular" cabeçalhos (Offset) e ler o payload.
-    - [ ] Extrair e exibir dados formatados: `[TCP] 192.168.1.5:443 -> 192.168.1.10:55432`.
+- [x] **Infraestrutura RabbitMQ:** Serviço rodando via Docker na porta 5674.
+- [x] **Serialização JSON:** Integração de lógica para converter pacotes em C para objetos JSON.
+- [x] **Conector AMQP:** Publicação assíncrona utilizando a biblioteca `librabbitmq`.
 
-## 🐇 Fase 3: Camada de Mensageria & Serialização (Middleware)
-**Objetivo:** Desacoplar a captura do armazenamento. O Sniffer (C) não deve gravar no banco diretamente para não perder performance; ele apenas "avisa" a fila.
+## 🧠 Fase 3: Inteligência de Segurança (IDS Engine)
+**Objetivo:** Implementar lógica de análise comportamental para detecção de anomalias em nível de kernel/user-space.
 
-- [ ] **Infraestrutura RabbitMQ:**
-    - [ ] Adicionar serviço `rabbitmq` ao `docker-compose.yml`.
-    - [ ] Configurar *Exchange* e *Queue* (ex: `network_events`).
-- [ ] **Serialização de Dados (C para JSON):**
-    - [ ] Integrar biblioteca de JSON em C (`cJSON` ou `Jansson`).
-    - [ ] Criar função `packet_to_json()`: Converter a `struct` do pacote em string JSON.
-- [ ] **Conector AMQP (C Client):**
-    - [ ] Integrar biblioteca `rabbitmq-c` (librabbitmq).
-    - [ ] Implementar conexão persistente com o Broker.
-    - [ ] Publicar JSON na fila a cada pacote processado.
+- [x] **Detector de Port Scan:** Identificação de varreduras baseada em limiar de portas únicas (TCP/UDP).
+- [x] **Detector de DoS (ICMP Flood):** Identificação de inundação de pings por segundo.
+- [x] **Gerenciamento de Estado:** Tabela de IPs suspeitos com **Garbage Collection** (limpeza de memória de IPs inativos).
+- [ ] **Detecção de Stealth Scans:** Identificar flags TCP anômalas (Null, Xmas, SYN/FIN).
 
-## ⚙️ Fase 4: O Consumidor e Persistência (The Worker)
-**Objetivo:** Ler da fila em alta velocidade e gravar no banco de dados de forma assíncrona.
+## ⚙️ Fase 4: O Worker e Persistência (The Ingestor)
+**Objetivo:** Consumo de mensagens em alta velocidade e gravação em banco de dados Time Series.
 
-- [ ] **Worker Service (Python/Go/Telegraf):**
-    - [ ] Criar um script/serviço separado que escuta a fila do RabbitMQ.
-    - [ ] *Nota:* Isso remove a carga de I/O (Input/Output) do programa principal em C.
-- [ ] **Banco de Dados (Time Series):**
-    - [ ] Configurar **InfluxDB** via Docker.
-    - [ ] Implementar escrita em lote (*Batch Write*) para otimizar performance.
-    - [ ] Gravar métricas essenciais: `bytes_sent`, `packets_count`, `flags_detected`.
+- [x] **Python Data Ingestor:** Migração da ingestão para Python para maior flexibilidade e tratamento de erros.
+- [x] **InfluxDB Schema:** Mapeamento de `src_ip` e `protocol` como tags para buscas ultra-rápidas.
+- [x] **Ambiente Isolado:** Implementação de ambiente virtual (venv) para gestão de dependências Python.
 
 ## 📊 Fase 5: Visualização e Operação (SOC Dashboard)
-**Objetivo:** Transformar dados brutos em inteligência visual para o analista de segurança.
+**Objetivo:** Transformar métricas em inteligência visual para o analista.
 
-- [ ] **Grafana Setup:**
-    - [ ] Conectar Grafana ao InfluxDB (DataSource).
-- [ ] **Dashboards Operacionais:**
-    - [ ] **Velocímetro:** Throughput da rede em tempo real (MB/s).
-    - [ ] **Top Talkers:** Ranking dos IPs que mais geram tráfego.
-    - [ ] **Mapa de Calor:** Portas e serviços mais acessados.
-    - [ ] **Indicador de Ameaças:** Contagem de pacotes suspeitos/anômalos.
+- [x] **Grafana Integration:** Conexão Flux com InfluxDB funcionando.
+- [ ] **Dashboards de Ameaças:** Painéis de "Ataques em Tempo Real" que piscam em vermelho no `is_scan == 1`.
+- [ ] **Alertas Ativos:** Notificações automáticas via Telegram ou Discord ao detectar scans críticos.
 
-## 🛡️ Fase 6: Inteligência de Segurança (IDS Engine)
-**Objetivo:** Implementar lógica de análise comportamental para detecção de intrusão.
+## 🚀 Fase 6: Enriquecimento (Threat Intelligence) - PRÓXIMOS PASSOS
+**Objetivo:** Adicionar contexto externo aos IPs capturados.
 
-- [ ] **Análise de Flags TCP:**
-    - [ ] Detectar combinações anômalas (Ex: *Null Scan*, *Xmas Scan*).
-- [ ] **Detector de Port Scan:**
-    - [ ] Implementar lógica temporal: "Se IP X acessar > 10 portas diferentes em < 1s -> ALERTA".
-    - [ ] Publicar alertas em uma fila dedicada (`security_alerts`).
-- [ ] **Detector de DoS (Syn Flood):**
-    - [ ] Calcular razão SYN/ACK. Desbalanceamento alto indica possível ataque.
-- [ ] **Logging de Alerta:**
-    - [ ] Enviar notificação crítica (Log local ou Webhook).
+- [ ] **Geolocalização IP:** Integrar base MaxMind/GeoIP para mapear a origem geográfica dos ataques.
+- [ ] **Reputação Global:** Consultar APIs de Threat Intel (AbuseIPDB) para identificar IPs já reportados como maliciosos.
+- [ ] **WHOIS Integration:** Identificar a qual organização ou provedor pertence o IP atacante.
+
+## ⚡ Fase 7: Alta Performance (Enterprise Tuning)
+**Objetivo:** Otimizar o sensor C para redes de alta densidade.
+
+- [ ] **Multi-threading:** Separar captura, análise e publicação em threads (`pthreads`) distintas.
+- [ ] **Zero-Copy Capture:** Migrar de pcap padrão para AF_PACKET ou PF_RING para reduzir carga de CPU.
 
 ---
-> *Este roadmap transforma o projeto de um simples script acadêmico em uma arquitetura de microsserviços utilizada em grandes empresas de segurança.*
+> *Este projeto evoluiu de um sensor acadêmico para uma arquitetura distribuída de defesa de rede.*
