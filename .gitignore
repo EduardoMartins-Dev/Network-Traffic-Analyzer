@@ -1,8 +1,7 @@
 .vscode/launch.json
 .vscode/tasks.json
-.gitignore
-.idea
+.idea/
 /cmake
 /cmake-build-debug3
-traffic_log.txtgrafana_data/
-.idea/
+traffic_log.txt
+grafana_data/
