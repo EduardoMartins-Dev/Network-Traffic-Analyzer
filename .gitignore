@@ -1,6 +1,5 @@
 .vscode/launch.json
 .vscode/tasks.json
-.idea
 /cmake
 /cmake-build-debug
 traffic_log.txt
