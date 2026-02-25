@@ -4,4 +4,5 @@
 .idea
 /cmake
 /cmake-build-debug3
-traffic_log.txt
+traffic_log.txtgrafana_data/
+.idea/
