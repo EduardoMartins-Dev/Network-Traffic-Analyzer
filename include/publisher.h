@@ -6,11 +6,14 @@
 void init_queue();
 
 //Envia o JSON
-void send_message(const char *message);
+static void send_message(const char *message);
 
 // fecha conexao
 
 void close_queue();
+
+void publish_packet(const char* src_ip, int port, const char* proto, int bytes, int is_scan);
+
 
 
 #endif //PUBLISHER_H
