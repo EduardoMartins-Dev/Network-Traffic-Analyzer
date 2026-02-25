@@ -1,7 +1,11 @@
 .vscode/launch.json
 .vscode/tasks.json
-.idea/
 /cmake
-/cmake-build-debug3
+/cmake-build-debug
 traffic_log.txt
-grafana_data/
+/influxdb_config
+/influxdb_data
+/grafana_data
+/.venv
+/venv
+/rabbitmq_data
