@@ -1,211 +1,252 @@
-# 📡 Network Traffic Analyzer (Microservices Edition)
+# Network Traffic Analyzer
 
 ![Status](https://img.shields.io/badge/Status-Development-orange?style=for-the-badge)
+![Version](https://img.shields.io/badge/Version-3.0-blueviolet?style=for-the-badge)
 ![Language](https://img.shields.io/badge/Language-C11-blue?style=for-the-badge&logo=c&logoColor=white)
+![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-lightgrey?style=for-the-badge)
 ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-Messaging-FF6600?style=for-the-badge&logo=rabbitmq&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Infrastructure-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
-O **Network Traffic Analyzer** é um sistema de monitoramento de rede de alta performance desenvolvido **100% em C (C11)**.
+O **Network Traffic Analyzer** é um sistema de monitoramento e detecção de intrusão (IDS) de alta performance desenvolvido em C (C11), com arquitetura inspirada no modelo **Agent/Server do Zabbix**.
 
-Diferente de sniffers tradicionais monolíticos, este projeto utiliza uma **Arquitetura de Microsserviços orientada a eventos**. Ele desacopla a captura de pacotes do processamento de banco de dados usando filas de mensagens (AMQP), garantindo que o sniffer nunca perca pacotes (*packet loss*) mesmo quando o banco de dados estiver sob carga pesada.
+Cada agente roda em um host monitorado, captura pacotes via libpcap/Npcap e os envia para um servidor central. O servidor consolida os dados de múltiplos agentes, processa a telemetria e exibe tudo em dashboards Grafana em tempo real.
 
 ---
 
-# ⚠️ Aviso de Segurança e Ética
+## Aviso de Segurança
 
-> **IMPORTANTE:** Este software foi desenvolvido estritamente para fins educacionais e de pesquisa em segurança defensiva (Blue Team).
+> Este software foi desenvolvido estritamente para fins educacionais e de pesquisa em segurança defensiva (Blue Team).
 >
-> - **Ambiente de Execução:** Deve ser operado exclusivamente em redes laboratoriais isoladas, redes privadas autorizadas ou localhost.
-> - **Propósito:** Estudar a pilha TCP/IP, compreender o funcionamento de Message Brokers e praticar C em baixo nível.
-> - **Isenção de Responsabilidade:** O autor não se responsabiliza pelo uso indevido para monitoramento não autorizado.
+> - Execute exclusivamente em redes laboratoriais isoladas, redes privadas autorizadas ou localhost.
+> - O autor não se responsabiliza pelo uso em monitoramento não autorizado.
 
 ---
 
-# 🏗️ Arquitetura do Sistema
+## Arquitetura: Agent/Server
 
-O projeto adota o padrão **Producer-Consumer distribuído**.
+```
+[Host A] libpcap → Agente C ──┐
+[Host B] libpcap → Agente C ──┼──→ RabbitMQ Central → data_ingestor.py → InfluxDB → Grafana
+[Host C] libpcap → Agente C ──┘         (Servidor)
+```
 
 ```mermaid
 flowchart LR
-    subgraph Capture["🛡️ Camada de Captura (C)"]
-        A[Sniffer / Producer]
+    subgraph Agents["Agentes (hosts monitorados)"]
+        A1[Agente - Host A]
+        A2[Agente - Host B]
+        A3[Agente - Host C]
     end
 
-    subgraph Broker["🐰 Camada de Mensageria (Docker)"]
-        B{RabbitMQ Server}
-    end
-
-    subgraph Ingest["⚙️ Camada de Processamento (C)"]
-        C[Ingestor / Consumer]
-    end
-
-    subgraph Storage["🗄️ Camada de Dados (Docker)"]
+    subgraph Server["Servidor Central (Docker)"]
+        B{RabbitMQ}
+        C[data_ingestor.py]
         D[(InfluxDB)]
-        E[Grafana Dashboard]
+        E[Grafana]
     end
 
-    A -->|JSON via AMQP| B
-    B -->|JSON via AMQP| C
-    C -->|HTTP Line Protocol| D
+    A1 -->|AMQP / TLS| B
+    A2 -->|AMQP / TLS| B
+    A3 -->|AMQP / TLS| B
+    B --> C
+    C --> D
     D --> E
 ```
 
----
+### Responsabilidades
 
-# 🔄 Fluxo de Dados
-
-## 1️⃣ NetworkTrafficAnalyzer (Produtor)
-
-- Captura bruta via **libpcap** (Promiscuous Mode).
-- Analisa cabeçalhos **Ethernet, IP, TCP/UDP**.
-- Serializa os dados para **JSON**.
-- Publica na fila `traffic_queue` do RabbitMQ.
-
-## 2️⃣ RabbitMQ (Broker)
-
-- Atua como buffer de alta performance.
-- Garante persistência temporária caso o consumidor caia.
-
-## 3️⃣ DataIngestor (Consumidor)
-
-- Serviço autônomo em C executando em loop infinito.
-- Consome mensagens da fila.
-- Converte JSON para **Influx Line Protocol**.
-- Envia para o banco via **HTTP (libcurl)**.
-
-## 4️⃣ Visualização
-
-- **InfluxDB:** Armazena séries temporais.
-- **Grafana:** Renderiza gráficos de throughput, protocolos e alertas.
+| Componente | Onde roda | Função |
+|------------|-----------|--------|
+| **Agente (C)** | Host monitorado | Captura pacotes, detecta anomalias, envia telemetria |
+| **RabbitMQ** | Servidor central | Buffer de mensagens durável entre agentes e ingestor |
+| **data_ingestor.py** | Servidor central | Consome fila, enriquece com GeoIP, grava no InfluxDB |
+| **InfluxDB** | Servidor central | Armazena séries temporais de tráfego |
+| **Grafana** | Servidor central | Dashboards e alertas em tempo real |
 
 ---
 
-# 💻 Tech Stack
+## Fluxo de Dados
+
+1. **Captura:** libpcap (Linux) / Npcap (Windows) intercepta pacotes em modo promíscuo.
+2. **Análise:** `analyzer.c` classifica o tráfego — detecta Port Scan (≥15 portas únicas) e ICMP Flood (≥20 pacotes).
+3. **Publicação:** `publisher.c` serializa o evento em JSON e publica na fila via AMQP.
+4. **Ingestão:** `data_ingestor.py` consome a fila, enriquece com geolocalização e grava no InfluxDB.
+5. **Visualização:** Grafana exibe os dados em tempo real via Flux query.
+
+---
+
+## Tech Stack
 
 | Componente | Tecnologia | Descrição |
-|------------|------------|------------|
-| Linguagem Core | C (C11) | Performance crítica e gestão manual de memória |
-| Captura | libpcap | Biblioteca padrão para captura de pacotes |
-| Mensageria | RabbitMQ-C | Cliente AMQP para comunicação assíncrona |
-| Requisições HTTP | libcurl | Cliente HTTP para enviar dados ao InfluxDB |
-| Parsing JSON | cJSON | Serialização e deserialização |
-| Database | InfluxDB | Banco NoSQL otimizado para Time Series |
-| Dashboard | Grafana | Interface visual para análise |
-| Infraestrutura | Docker Compose | Orquestração dos containers |
+|------------|------------|-----------|
+| Linguagem Core | C (C11) | Performance crítica, gestão manual de memória |
+| Captura (Linux) | libpcap | Captura de pacotes em modo promíscuo |
+| Captura (Windows) | Npcap SDK | Drop-in replacement do libpcap para Windows |
+| Mensageria | librabbitmq | Cliente AMQP com suporte a TCP e TLS/SSL |
+| JSON | cJSON | Serialização leve embutida no projeto |
+| Ingestor | Python 3 + pika | Consumidor flexível com enriquecimento GeoIP |
+| Banco de dados | InfluxDB 2.7 | Time series otimizado para telemetria |
+| Dashboard | Grafana | Interface visual com alertas |
+| Infraestrutura | Docker Compose | Orquestração do servidor central |
 
 ---
 
-# 📂 Estrutura de Diretórios
+## Estrutura de Diretórios
 
 ```
 Network-Traffic-Analyzer/
-├── cmake-build-debug/   # Executáveis gerados
-├── include/             # Headers (.h)
-│   ├── analyzer.h       # Lógica de análise
-│   ├── capture.h        # Configuração do pcap
-│   ├── cJSON.h          # Parser JSON
-│   ├── output.h         # Formatação
-│   └── publisher.h      # Cliente RabbitMQ (Produtor)
-├── src/                 # Código Fonte (.c)
-│   ├── analysis/        # Implementação da análise
-│   ├── capture/         # Implementação da captura
-│   ├── ingestor/        # Consumidor Rabbit -> Influx
-│   ├── output/          # Serialização e envio
-│   └── main.c           # Sniffer Principal
-├── docker-compose.yml   # Infraestrutura (Rabbit + Influx + Grafana)
-├── CMakeLists.txt       # Configuração de Build
-└── README.md            # Documentação
+├── include/
+│   ├── analyzer.h        # Interface do motor IDS
+│   ├── capture.h         # Interface da camada de captura
+│   ├── cJSON.h           # Parser JSON (embutido)
+│   └── publisher.h       # Interface do cliente AMQP
+├── src/
+│   ├── analysis/
+│   │   └── analyzer.c    # Detecção de Port Scan e ICMP Flood
+│   ├── capture/
+│   │   └── capture.c     # Captura via libpcap / Npcap
+│   ├── ingestor/
+│   │   └── data_ingestor.py  # Worker Python: RabbitMQ → InfluxDB
+│   └── output/
+│       ├── cJSON.c        # Implementação do parser JSON
+│       └── publisher.c    # Cliente AMQP (TCP / TLS)
+│   └── main.c             # Ponto de entrada do agente
+├── docker-compose.yml     # Infraestrutura do servidor central
+├── CMakeLists.txt         # Build multiplataforma (Linux / Windows)
+├── requirements.txt       # Dependências Python do ingestor
+└── README.md
 ```
 
 ---
 
-# 🛠️ Pré-requisitos e Instalação
+## Pré-requisitos
 
-Sistema alvo: **Linux (Ubuntu / Debian / Kali)**
-
-## 1️⃣ Dependências do Sistema
+### Linux (Ubuntu / Debian / Kali)
 
 ```bash
-# Compiladores e ferramentas
 sudo apt update
 sudo apt install build-essential cmake git
-
-# Bibliotecas de desenvolvimento
-sudo apt install libpcap-dev librabbitmq-dev libcurl4-openssl-dev
-
-# Docker e Compose
+sudo apt install libpcap-dev librabbitmq-dev
 sudo apt install docker.io docker-compose-plugin
 ```
 
+### Windows
+
+- [Npcap](https://npcap.com/) instalado com "WinPcap API compatibility mode"
+- [Npcap SDK](https://npcap.com/dist/npcap-sdk-1.13.zip) extraído em `C:\Npcap-sdk`
+- [librabbitmq-c](https://github.com/alanxz/rabbitmq-c) compilado com CMake
+- Visual Studio 2022 ou MinGW-w64
+
 ---
 
-## 2️⃣ Compilação (CMake)
+## Compilação
+
+### Linux
 
 ```bash
-mkdir build
-cd build
-cmake ..
-make
+cmake -B build -S .
+cmake --build build
 ```
 
-Executáveis gerados:
+### Windows (Visual Studio)
 
-- `NetworkTrafficAnalyzer`
-- `DataIngestor`
+```powershell
+cmake -B build -S . -DNPCAP_SDK_DIR="C:/Npcap-sdk"
+cmake --build build --config Release
+```
 
----
-
-# ▶️ Como Rodar (Passo a Passo)
-
-É necessário executar **3 componentes simultaneamente** (recomenda-se 3 terminais).
+Binário gerado: `build/NetworkTrafficAnalyzer`
 
 ---
 
-## 🔹 Passo 1: Subir a Infraestrutura
+## Como Rodar
 
-Na raiz do projeto:
+### 1. Servidor Central — subir infraestrutura
 
 ```bash
-sudo docker compose up -d
+docker compose up -d
 ```
 
-Aguarde até que todos os containers estejam com status `Started`.
-
----
-
-## 🔹 Passo 2: Iniciar o Consumidor (Ingestor)
-
-```bash
-cd build
-./DataIngestor
-```
-
----
-
-## 🔹 Passo 3: Iniciar o Sniffer (Produtor)
-
-Substitua `wlp2s0` pela sua interface de rede.
+### 2. Servidor Central — iniciar o ingestor
 
 ```bash
 cd build
-sudo ./NetworkTrafficAnalyzer wlp2s0
+python3 data_ingestor.py
+```
+
+### 3. Agente — iniciar o sensor
+
+Sem argumentos, o agente lista as interfaces disponíveis:
+
+```bash
+sudo ./build/NetworkTrafficAnalyzer
+# Interfaces disponiveis:
+#   1. eth0  (Ethernet)
+#   2. wlan0 (Wi-Fi)
+```
+
+Com a interface escolhida:
+
+```bash
+sudo ./build/NetworkTrafficAnalyzer eth0
+```
+
+No Windows (Prompt como Administrador):
+
+```powershell
+.\build\NetworkTrafficAnalyzer.exe
 ```
 
 ---
 
-# 📊 Acessando os Dashboards
+## Configuração do Agente (Variáveis de Ambiente)
+
+O agente é configurado inteiramente por variáveis de ambiente — sem necessidade de recompilar para mudar de servidor.
+
+| Variável | Padrão | Descrição |
+|----------|--------|-----------|
+| `AGENT_SERVER_HOST` | `localhost` | Endereço do servidor RabbitMQ central |
+| `AGENT_SERVER_PORT` | `5674` | Porta do broker (5671 para TLS) |
+| `AGENT_VHOST` | `/` | Virtual host do RabbitMQ |
+| `AGENT_ID` | `guest` | Identidade do agente (usuário AMQP) |
+| `AGENT_TOKEN` | `guest` | Credencial/senha do agente |
+| `AGENT_QUEUE` | `traffic_queue` | Nome da fila de telemetria |
+| `AGENT_USE_TLS` | `0` | `1` ativa TLS/SSL na conexão |
+| `AGENT_CA_CERT` | _(nenhum)_ | Caminho para o certificado CA (`.pem`) |
+
+### Exemplo — agente apontando para servidor remoto com TLS
+
+```bash
+export AGENT_SERVER_HOST=edr-server.empresa.com
+export AGENT_SERVER_PORT=5671
+export AGENT_ID=agente-host-a
+export AGENT_TOKEN=TOKEN_SECRETO
+export AGENT_USE_TLS=1
+export AGENT_CA_CERT=/etc/agente/ca.pem
+
+sudo ./build/NetworkTrafficAnalyzer eth0
+```
+
+### Exemplo — teste local (infra padrão Docker)
+
+```bash
+sudo ./build/NetworkTrafficAnalyzer eth0
+# Usa todos os valores padrão (localhost:5674, guest/guest, sem TLS)
+```
+
+---
+
+## Dashboards
 
 | Serviço | URL | Usuário | Senha |
-|----------|------|----------|--------|
+|---------|-----|---------|-------|
 | RabbitMQ Admin | http://localhost:15673 | guest | guest |
 | InfluxDB UI | http://localhost:8086 | admin | adminpassword123 |
 | Grafana | http://localhost:3000 | admin | admin |
 
 ---
 
-# 📝 Licença
+## Licença
 
-Distribuído sob a **Licença MIT**.
-
-Sinta-se livre para contribuir, criar forks e abrir Pull Requests.
+Distribuído sob a **Licença MIT**. Contribuições via Pull Request são bem-vindas.
