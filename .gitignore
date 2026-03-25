@@ -1,5 +1,5 @@
-.vscode/launch.json
-.vscode/tasks.json
+.vscode/
+.idea/
 /cmake
 /cmake-build-debug
 traffic_log.txt
@@ -9,3 +9,5 @@ traffic_log.txt
 /.venv
 /venv
 /rabbitmq_data
+*.o
+*.a
