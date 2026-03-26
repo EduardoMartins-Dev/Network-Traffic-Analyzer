@@ -384,5 +384,3 @@ MITRE ATT&CK: T1557, T1046, T1110, T1071.004, T1498
 | Custo de operação | Free | Free | Free | Free | **~R$ 39/mês** |
 
 ---
-
-> *Do sniffer acadêmico à plataforma de detecção de intrusão com IA — rodando em produção, testada via CI/CD, provisionada via Terraform, e acessível por qualquer entrevistador em `grafana.seuids.dev`.*
