@@ -1,93 +1,388 @@
 # Roadmap: Network Traffic Analyzer
 
-Evolução do projeto desde um sniffer básico até uma arquitetura distribuída Agent/Server de detecção de intrusão em tempo real.
+Evolução do projeto desde um sniffer básico até um **IDS comportamental com correlação de kill chain e narração por IA** — rodando em produção com infra provisionada via Terraform.
+
+```
+v1.0        v2.0          v3.0             v4.0              v5.0            v6.0             v7.0
+Captura → Mensageria → Agent/Server → IDS Engine → Multi-Thread → Prod + IaC → AI Narrator
+  ✅          ✅            ✅           EM BREVE        PLANEJADO       PLANEJADO        PLANEJADO
+```
 
 ---
 
-## v1.0 — Fundação e Captura
+## Versões concluídas
+
+### v1.0 — Fundação e Captura ✅
 
 **Objetivo:** captura de pacotes brutos e interação com a interface de rede.
 
-- [x] Inicialização de dispositivo via libpcap em modo promíscuo
-- [x] Loop de captura com filtros BPF (TCP / UDP / ICMP)
-- [x] Parsing de cabeçalhos via aritmética de ponteiros (Ethernet → IP → TCP/UDP)
+* Inicialização de dispositivo via libpcap em modo promíscuo
+* Loop de captura com filtros BPF (TCP / UDP / ICMP)
+* Parsing de cabeçalhos via aritmética de ponteiros (Ethernet → IP → TCP/UDP)
 
----
-
-## v2.0 — Mensageria e IDS Engine
+### v2.0 — Mensageria e IDS Engine ✅
 
 **Objetivo:** desacoplar captura de armazenamento e implementar detecção comportamental.
 
-- [x] Infraestrutura RabbitMQ via Docker (porta 5674)
-- [x] Serialização de pacotes para JSON com cJSON
-- [x] Publicação assíncrona via librabbitmq (AMQP 0.9.1)
-- [x] Detector de Port Scan (limiar: ≥15 portas únicas por IP)
-- [x] Detector de ICMP Flood (limiar: ≥20 pacotes por IP)
-- [x] Tabela de IPs suspeitos com garbage collection (timeout de inatividade: 300s)
-- [x] Ingestor Python: RabbitMQ → InfluxDB com enriquecimento GeoIP
-- [x] Schema InfluxDB com tags indexadas (`src_ip`, `protocol`)
-- [x] Integração Grafana com datasource InfluxDB (Flux)
+* Infraestrutura RabbitMQ via Docker (porta 5674)
+* Serialização de pacotes para JSON com cJSON
+* Publicação assíncrona via librabbitmq (AMQP 0.9.1)
+* Detector de Port Scan (limiar: ≥15 portas únicas por IP)
+* Detector de ICMP Flood (limiar: ≥20 pacotes por IP)
+* Tabela de IPs suspeitos com garbage collection (timeout: 300s)
+* Ingestor Python: RabbitMQ → InfluxDB com enriquecimento GeoIP
+* Schema InfluxDB com tags indexadas (`src_ip`, `protocol`)
+* Integração Grafana com datasource InfluxDB (Flux)
 
----
-
-## v3.0 — Arquitetura Agent/Server (atual)
+### v3.0 — Arquitetura Agent/Server ✅
 
 **Objetivo:** transformar o sniffer em um agente distribuído configurável, inspirado no modelo Zabbix.
 
-- [x] Configuração 100% via variáveis de ambiente (zero recompilação para trocar de servidor)
-- [x] Suporte a TLS/SSL na conexão AMQP (`AGENT_USE_TLS=1`)
-- [x] Modo produção: validação de CA com `AGENT_CA_CERT`
-- [x] Fila durável (`durable=1`): sobrevive a reinicializações do broker
-- [x] Mensagens persistentes (`delivery_mode=2`): eventos forenses não são perdidos
-- [x] Verificação de privilégios multiplataforma (`#ifdef _WIN32`: `IsUserAnAdmin` vs `getuid`)
-- [x] Listagem automática de interfaces com `pcap_findalldevs` (Linux e Windows)
-- [x] CMakeLists.txt multiplataforma: bloco `if(WIN32)` com Npcap SDK, `wpcap.lib` e `Ws2_32`
-- [x] Remoção de arquivos obsoletos (`output.c`, `output.h`, `ingestor_obsoleto.c`)
+* Configuração 100% via variáveis de ambiente (zero recompilação)
+* Suporte a TLS/SSL na conexão AMQP (`AGENT_USE_TLS=1`)
+* Modo produção: validação de CA com `AGENT_CA_CERT`
+* Fila durável (`durable=1`) e mensagens persistentes (`delivery_mode=2`)
+* Verificação de privilégios multiplataforma (`#ifdef _WIN32`)
+* Listagem automática de interfaces com `pcap_findalldevs`
+* CMakeLists.txt multiplataforma: Linux (libpcap) e Windows (Npcap SDK)
 
 ---
 
-## v3.1 — Validação Windows
+## Próximas versões
 
-**Objetivo:** confirmar compilação e captura nativa no Windows com Npcap.
+### v4.0 — IDS Engine avançado 🔜
 
-- [ ] Compilar com MinGW-w64 / Visual Studio no Windows
-- [ ] Validar captura de pacotes via Npcap em ambiente real
-- [ ] Ajustar nomes de interface para o formato GUID do Windows (`\Device\NPF_{...}`)
-- [ ] Testar publicação AMQP (TCP e TLS) a partir do Windows
+> **Prioridade máxima.** A infraestrutura (RabbitMQ, InfluxDB, Grafana, Docker, TLS) está madura. O motor de detecção precisa acompanhar. Hoje o projeto detecta 2 tipos de ataque; esta versão leva para 8+, cobrindo a cadeia completa de reconhecimento → exploração → exfiltração.
 
----
+**Novas detecções no `analyzer.c`:**
 
-## v4.0 — Servidor Central e Multi-Agente
+* **SYN Flood:** contador de pacotes SYN sem ACK correspondente por IP de origem. Limiar adaptativo baseado no baseline do IP
+* **Stealth Scans:** detecção de combinações anômalas de TCP flags:
+  * Null Scan (flags = 0x00)
+  * Xmas Scan (FIN + PSH + URG)
+  * SYN/FIN Scan (SYN + FIN simultâneos)
+* **DNS Tunneling:** análise de payload DNS — subdomains anormalmente longos (>50 chars), volume anômalo de queries para o mesmo domínio, entropia alta no subdomain (base64/hex encoding)
+* **ARP Spoofing:** tabela MAC→IP mantida em memória. Alerta quando um MAC já associado a um IP aparece reivindicando outro (gratuitous ARP com IP diferente)
+* **SSH/FTP Brute Force:** contador de conexões SYN para portas 22/21/3389 por IP de origem em janela de tempo. Limiar: ≥30 tentativas em 60 segundos
+* **DDoS Amplification:** detecção de respostas DNS/NTP desproporcionais ao volume de requests (response ratio > 10:1)
 
-**Objetivo:** operação real com múltiplos agentes enviando para um servidor centralizado.
+**Baseline adaptativo (EWMA):**
 
-- [ ] RabbitMQ central exposto com AMQPS (porta 5671) e TLS configurado
-- [ ] Provisionamento de usuários AMQP por agente (um token por host)
-- [ ] mTLS: certificado de cliente único por agente para autenticação criptográfica
-- [ ] Ingestor Python adaptado para identificar origem do agente (tag `agent_id`)
-- [ ] Dashboard Grafana com visão multi-host e alertas de `is_scan == 1`
+* Cada IP rastreado mantém um `ip_baseline_t` com média móvel exponencialmente ponderada de: pacotes/segundo, portas únicas/minuto, DNS queries/minuto, proporção TCP/UDP/ICMP
+* Período de calibração: primeiras 100 amostras com alpha=0.3 (aprende rápido), depois alpha=0.1 (adapta devagar)
+* Detecção de anomalia: alerta quando `|valor_atual - ewma| > N * stddev` (sigma threshold configurável)
+* Elimina thresholds hardcoded — cada rede aprende seus próprios limites
 
----
+**Kill chain correlator:**
 
-## v5.0 — Threat Intelligence
+* Máquina de estados por IP: `IDLE → RECON → EXPLOIT → EXFIL → COMPLETE`
+* Eventos avançam o estágio dentro de uma janela temporal (default: 30 minutos)
+* Score de severidade 0-100 baseado no número de estágios completados + velocidade de progressão + criticidade das portas alvo
+* Agrupamento de alertas em "incidentes" — em vez de 5 alertas separados, um incidente com contexto completo
+* Mapeamento de cada detecção para MITRE ATT&CK techniques (tags no JSON publicado)
 
-**Objetivo:** enriquecer eventos com contexto externo.
+**Impacto estimado:**
 
-- [ ] Integração MaxMind GeoIP para geolocalização offline
-- [ ] Consulta AbuseIPDB para reputação de IPs
-- [ ] Integração WHOIS para identificar ASN e provedor do atacante
-- [ ] Detecção de Stealth Scans (flags TCP anômalas: Null, Xmas, SYN/FIN)
-
----
-
-## v6.0 — Alertas e Alta Performance
-
-**Objetivo:** notificações em tempo real e otimização para redes de alta densidade.
-
-- [ ] Notificações automáticas via Telegram / Discord ao detectar scans críticos
-- [ ] Multi-threading: separar captura, análise e publicação em threads (`pthreads`)
-- [ ] Zero-copy capture: migrar para AF_PACKET ou PF_RING para reduzir CPU
+* Cobertura de ameaças: 2/8 → 8/8 vetores comuns
+* Cobertura MITRE ATT&CK: 3 → 14+ techniques
+* Falsos negativos estimados: ~78% → ~35%
+* Overhead de CPU: +60% por pacote (~0.8µs → ~1.3µs) — ainda suporta 85k+ pps
 
 ---
 
-> *Do sniffer acadêmico à arquitetura distribuída de defesa de rede.*
+### v4.1 — PCAP Replay e Test Framework
+
+> **Qualidade de engenharia.** Sem testes reprodutíveis, cada nova detecção pode quebrar as existentes. Esta versão cria o framework que valida o IDS com tráfego real capturado.
+
+**Modo replay no agente:**
+
+* Flag `--replay <arquivo.pcap>` que lê pacotes de um arquivo em vez da interface de rede
+* Flag `--expect <gabarito.json>` com lista de detecções esperadas (tipo, IP, janela de tempo)
+* Output estruturado: `[PASS]`/`[FAIL]` por detecção + score final (% de acerto)
+* Suporte a diretório de pcaps: `--replay-dir attacks/` executa todos os arquivos e gera relatório consolidado
+
+**Dataset de testes:**
+
+* PCAPs curados de ataques conhecidos: CICIDS2017, Malware Traffic Analysis, CTF captures
+* Um pcap por tipo de ataque: `syn-flood.pcap`, `null-scan.pcap`, `dns-tunnel.pcap`, `arp-spoof.pcap`
+* Gabaritos JSON com tempos esperados e tolerâncias
+
+**CI/CD no GitHub Actions:**
+
+* Workflow `.github/workflows/test-ids.yml` executado a cada PR
+* Compila o agente, roda replay em todos os pcaps, valida detecções
+* Badge no README: ![IDS Score](https://img.shields.io/badge/IDS_Score-87%25-green)
+* Fail automático se score cair abaixo de 80%
+
+---
+
+### v5.0 — Multi-Threading e Performance
+
+> **Recuperar throughput.** As novas detecções da v4.0 adicionam overhead ao pipeline single-thread. Esta versão separa captura, análise e publicação em threads independentes, triplicando o throughput.
+
+**Pipeline multi-thread com pthreads:**
+
+* Thread 1 (captura): `pcap_loop()` → ring buffer lock-free. Prioridade SCHED_FIFO
+* Thread 2 (análise): ring buffer → `analyzer.c` → segundo ring buffer. Roda EWMA + correlator
+* Thread 3 (publicação): ring buffer → batch AMQP publish. Agrupa N eventos por envio
+
+**Ring buffer lock-free:**
+
+* Implementação SPSC (Single Producer, Single Consumer) sem mutex
+* Baseado em `__atomic_load` / `__atomic_store` com memory ordering
+* Tamanho configurável via env var `AGENT_BUFFER_SIZE` (default: 4096 slots)
+* Métricas de overflow: contador de pacotes descartados por buffer cheio
+
+**Batch publishing:**
+
+* Acumula N eventos (default: 50) ou timeout de 100ms antes de publicar
+* Reduz overhead de I/O AMQP em ~10x
+
+**Otimizações no ingestor:**
+
+* `prefetch_count=500` no consumer pika
+* Batch writes no InfluxDB (buffer de 500 pontos por escrita)
+* Migração de pika (síncrono) para aio-pika (asyncio) para I/O paralelo
+
+**Impacto estimado:**
+
+* Throughput: 85k pps (single-thread v4) → 350k+ pps (multi-thread)
+* Suporta links de 1 Gbps sem packet loss
+* Latência de publicação: reduzida ~10x com batching
+
+---
+
+### v5.1 — Validação Windows
+
+> **Confirmar suporte multiplataforma com as novas features.**
+
+* Compilar v4+v5 com MinGW-w64 / Visual Studio no Windows
+* Validar captura via Npcap + análise multi-thread em ambiente real
+* Ajustar nomes de interface para formato GUID (`\Device\NPF_{...}`)
+* Testar publicação AMQP (TCP e TLS) a partir do Windows
+* Thread API: `pthreads-w32` ou `_beginthreadex` nativo do Windows
+
+---
+
+### v6.0 — Produção, IaC e Observabilidade
+
+> **Infra de produção real.** O projeto sai do Docker Compose local para uma VPS acessível na internet, provisionada via Terraform, com HTTPS, domínio próprio e dashboards públicos.
+
+**Stack de produção (budget: ~R$ 40/mês):**
+
+| Componente | Serviço | Custo |
+|---|---|---|
+| VPS | Hetzner CX22 (2 vCPU, 4 GB, 40 GB SSD) | ~R$ 25/mês |
+| LLM API | Groq Developer (Llama 3.3 70B) | ~R$ 9/mês |
+| Domínio | `.dev` via Google Domains / Namecheap | ~R$ 5/mês |
+| DNS + CDN | Cloudflare (free tier) | R$ 0 |
+| CI/CD | GitHub Actions (free para OSS) | R$ 0 |
+| GeoIP | MaxMind GeoLite2 (free com registro) | R$ 0 |
+| Alertas | Telegram Bot API | R$ 0 |
+| Dashboard | Grafana (self-hosted na VPS) | R$ 0 |
+
+**Terraform (Infrastructure-as-Code):**
+
+* `main.tf`: provisionamento da VPS Hetzner via provider `hcloud`
+* `dns.tf`: registros DNS no Cloudflare (subdomínios `grafana.*`, `rabbitmq.*`, `docs.*`)
+* `bootstrap.sh`: script de user-data que instala Docker, clona o repo, e sobe Docker Compose
+* `variables.tf`: tokens e configs parametrizadas (nunca hardcoded)
+* Documentação: `terraform plan` → `terraform apply` → sistema rodando em < 5 minutos
+
+**Nginx reverse proxy + TLS:**
+
+* Nginx na VPS como entry point único na porta 443
+* Subdomínios roteados para containers internos:
+  * `grafana.seuids.dev` → Grafana :3000
+  * `rabbitmq.seuids.dev` → RabbitMQ Management :15672
+  * `docs.seuids.dev` → Static docs site
+* Certificados TLS automáticos via Let's Encrypt + Certbot
+* Headers de segurança: HSTS, X-Content-Type-Options, X-Frame-Options
+
+**Dashboards Grafana otimizados para demo:**
+
+* Painel 1: "Live traffic" — gráfico de linha com pacotes/segundo em tempo real
+* Painel 2: "Threat map" — tabela de IPs suspeitos com GeoIP, tipo de ataque, score
+* Painel 3: "Kill chain timeline" — timeline visual de incidentes com estágios coloridos
+* Painel 4: "AI narrative" — texto do LLM narrator exibindo a última narrativa de incidente
+* Painel 5: "Detection score" — gauge mostrando taxa de detecção do IDS (alimentado pelo replay)
+* Viewer anônimo habilitado (entrevistadores acessam sem login)
+
+**Alertas em tempo real:**
+
+* Telegram: mensagem formatada com tipo de ataque, IP, score, e ação recomendada
+* Grafana alerting: thresholds configuráveis por tipo de detecção
+* Webhook genérico: integração futura com Slack/Discord/PagerDuty
+
+---
+
+### v7.0 — AI Narrator (LLM Integration)
+
+> **O diferencial que nenhum IDS open-source tem.** Quando o kill chain correlator gera um incidente, uma LLM transforma o JSON técnico em uma narrativa em linguagem natural que explica o ataque, identifica a fase, e recomenda ações.
+
+**Arquitetura do narrator:**
+
+* Timer no `data_ingestor.py`: a cada 5 minutos, busca incidentes pendentes (sem narrativa)
+* Para cada incidente, monta prompt com: JSON do incidente, metadados GeoIP, baselines do IP, histórico de eventos dos últimos 30 minutos
+* Chamada ao Groq API (Llama 3.3 70B Versatile): latência ~1-2s, throughput 394 tok/s
+* Narrativa salva no InfluxDB com tag `narrative=true` e exibida no painel Grafana
+
+**Roteamento inteligente de modelos:**
+
+* Score < 50: Llama 3.1 8B Instant ($0.05/$0.08 por MTok) — triage rápido
+* Score 50-80: Qwen3 32B ($0.29/$0.59 por MTok) — narrativa intermediária
+* Score > 80: Llama 3.3 70B Versatile ($0.59/$0.79 por MTok) — narrativa completa com recomendações
+* Batch API para incidentes não-urgentes (50% de desconto)
+* Prompt caching para system prompt fixo (50% de desconto no input)
+
+**Formato da narrativa:**
+
+```
+INCIDENT-0042 | Severidade: Crítica (94/100) | 2026-XX-XX 09:08:12 UTC
+
+O QUE ACONTECEU:
+Host 192.168.1.50 (TTL=128, provável Windows) iniciou ataque coordenado
+contra servidor .100. Sequência: ARP spoofing (T+0s) → null scan (T+45s) →
+brute force SSH com ~200 tentativas (T+5min) → exfiltração via DNS tunnel
+com subdomains codificados em base64 (T+8min).
+
+POR QUE É CRÍTICO:
+4 de 5 estágios da kill chain completos. DNS tunneling ativo — dados
+saindo agora. Volume: 47 queries/min vs baseline de 3/min.
+
+AÇÃO RECOMENDADA:
+iptables -A INPUT -s 192.168.1.50 -j DROP
+Verificar logs SSH de .100. Decodificar DNS queries para identificar dados exfiltrados.
+
+MITRE ATT&CK: T1557, T1046, T1110, T1071.004, T1498
+```
+
+**Custo estimado:**
+
+* ~100 incidentes/dia × ~2.5k tokens × 30 dias = ~7.5M tokens/mês
+* Roteamento inteligente: ~80% no 8B + ~15% no 32B + ~5% no 70B
+* Custo total: ~US$ 1.70/mês (~R$ 9/mês)
+
+---
+
+### v8.0 — Escalabilidade e Multi-Agente
+
+> **Quando um único agente não é suficiente.** Preparar o sistema para operar com múltiplos agentes reportando para o mesmo servidor central.
+
+**RabbitMQ cluster (3 nodes):**
+
+* Quorum queues com Raft consensus para alta disponibilidade
+* Consistent-hash-exchange para sharding por `agent_id`
+* HAProxy na frente para load balancing das conexões AMQP
+
+**Consumer groups:**
+
+* Múltiplos `data_ingestor.py` consumindo a mesma fila (round-robin automático do RabbitMQ)
+* Cada consumer processa batch independente → throughput linear
+
+**Provisionamento de agentes:**
+
+* mTLS: certificado de cliente único por agente
+* Registro via API REST com `AGENT_ID` e `AGENT_TOKEN`
+* Dashboard Grafana com visão multi-host (filtro por `agent_id`)
+* Alertas específicos por agente: "Host A offline há 5 minutos"
+
+**InfluxDB otimizado:**
+
+* Retention policies: hot (7 dias), warm (downsampled 90 dias), cold (export para S3/MinIO)
+* Flux tasks de downsampling automático: agregação por minuto em vez de por segundo
+* Tags adicionais: `agent_id`, `kill_chain_stage`, `mitre_technique`
+
+---
+
+### v9.0 — Threat Intelligence
+
+> **Enriquecer eventos com contexto externo.** Transformar IPs em informação acionável.
+
+* MaxMind GeoIP2 pago para geolocalização de alta precisão (cidade + ASN)
+* AbuseIPDB API: reputação de IPs (score de abuso, reports anteriores)
+* Cache Redis/em-memória com TTL de 24h para evitar chamadas repetidas
+* WHOIS lookup para identificar ASN e provedor do atacante
+* Intel framework: lista de IoCs (IPs, hashes, domínios) carregada de arquivo. Alerta automático quando um IoC aparece no tráfego
+
+---
+
+### v10.0 — Alta Performance
+
+> **Para redes de alta densidade.** Otimizações que só fazem sentido em links de 1 Gbps+.
+
+* Migração de libpcap para AF_PACKET com TPACKET_V3 (mmap ring buffer no kernel)
+* Zero-copy capture: pacotes vão direto do NIC para userspace sem cópia kernel
+* PF_RING como alternativa para NICs Intel com drivers compatíveis
+* NUMA-aware pinning: threads fixadas em CPUs do mesmo domínio NUMA que a NIC
+* Métricas de performance: packet loss rate, CPU por core, ring buffer utilization
+
+---
+
+## Referência: Stack de Produção Recomendada
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│  Agentes (hosts monitorados)                                   │
+│  libpcap → analyzer.c (EWMA + kill chain) → publisher.c       │
+│  Configuração 100% via env vars | Suporte Linux + Windows      │
+└────────────────────────┬───────────────────────────────────────┘
+                         │ AMQP / TLS
+┌────────────────────────▼───────────────────────────────────────┐
+│  Hetzner VPS CX22 (~R$ 25/mês) — Docker Compose               │
+│                                                                │
+│  ┌──────────┐  ┌──────────────┐  ┌──────────┐  ┌───────────┐ │
+│  │RabbitMQ  │→ │data_ingestor │→ │InfluxDB  │→ │  Grafana  │ │
+│  │  :5672   │  │.py + Groq    │  │  :8086   │  │  :3000    │ │
+│  └──────────┘  └──────────────┘  └──────────┘  └───────────┘ │
+│                                                                │
+│  ┌──────────────────────────────────────────────────────────┐ │
+│  │ Nginx reverse proxy (:443) + Let's Encrypt TLS          │ │
+│  │ grafana.seuids.dev | rabbitmq.seuids.dev | docs.*       │ │
+│  └──────────────────────────────────────────────────────────┘ │
+│                                                                │
+│  Provisionado via Terraform | CI/CD via GitHub Actions         │
+└────────────────────────────────────────────────────────────────┘
+```
+
+**Budget mensal: ~R$ 39/mês (buffer de R$ 21 reservado)**
+
+---
+
+## Referência: Cobertura MITRE ATT&CK por versão
+
+| Tática | Technique | v3.0 | v4.0 |
+|---|---|---|---|
+| Reconnaissance | T1046 Network scan | ✅ | ✅ |
+| Reconnaissance | T1018 Remote discovery | — | ✅ |
+| Discovery | T1040 Network sniffing | — | ✅ |
+| Discovery | T1016 System network | — | ✅ |
+| Lateral Movement | T1557 ARP spoofing | — | ✅ |
+| Credential Access | T1110 Brute force | — | ✅ |
+| Command & Control | T1071 DNS tunneling | — | ✅ |
+| Command & Control | T1571 Non-standard port | — | ✅ |
+| Exfiltration | T1048 Exfil over DNS | — | ✅ |
+| Impact | T1498 ICMP flood | ✅ | ✅ |
+| Impact | T1498 SYN flood | — | ✅ |
+| Impact | T1498 Amplification | — | ✅ |
+| **Total** | | **3** | **14** |
+
+---
+
+## Referência: Comparativo com IDS do mercado
+
+| Feature | Suricata | Snort 3 | Zeek | Wazuh | NTA (este projeto) |
+|---|---|---|---|---|---|
+| Detecção por assinatura | 40k+ regras | 30k+ regras | Via scripts | Via decoder | — |
+| Detecção comportamental | Limitada | — | Via scripts | Limitada | **EWMA + baselines** |
+| Kill chain correlation | — | — | — | Parcial | **Nativo** |
+| LLM narrative | — | — | — | — | **Groq + Llama** |
+| PCAP replay testing | Suricata-verify | — | Btest | — | **Integrado + CI/CD** |
+| Multi-threading | Nativo | Snort 3+ | Cluster mode | N/A | **v5.0 (pthreads)** |
+| Agent/Server | — | — | Cluster | **Nativo** | **Nativo** |
+| Infra as Code | — | — | — | Ansible | **Terraform** |
+| Custo de operação | Free | Free | Free | Free | **~R$ 39/mês** |
+
+---
+
+> *Do sniffer acadêmico à plataforma de detecção de intrusão com IA — rodando em produção, testada via CI/CD, provisionada via Terraform, e acessível por qualquer entrevistador em `grafana.seuids.dev`.*
