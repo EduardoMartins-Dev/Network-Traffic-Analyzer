@@ -105,21 +105,21 @@ void init_queue() {
            host, port, use_tls ? "sim" : "nao", id);
 }
 
-void publish_packet(const char *src_ip, int port, const char *proto, int bytes, int is_scan) {
+void publish_packet(const char *src_ip, int port, const char *proto, int bytes, int is_scan, const char *attack_type) {
     char message[MAX_JSON_SIZE];
 
-    const char *safe_ip    = src_ip ? src_ip : "0.0.0.0";
-    const char *safe_proto = proto  ? proto  : "UNKNOWN";
+    const char *safe_ip     = src_ip      ? src_ip      : "0.0.0.0";
+    const char *safe_proto  = proto       ? proto       : "UNKNOWN";
+    const char *safe_attack = attack_type ? attack_type : "NONE";
 
     snprintf(message, sizeof(message),
-             "{\"src_ip\":\"%s\", \"port\":%d, \"proto\":\"%s\", \"bytes\":%d, \"is_scan\":%d}",
-             safe_ip, port, safe_proto, bytes, is_scan);
+             "{\"src_ip\":\"%s\", \"port\":%d, \"proto\":\"%s\", \"bytes\":%d, \"is_scan\":%d, \"attack_type\":\"%s\"}",
+             safe_ip, port, safe_proto, bytes, is_scan, safe_attack);
 
     send_message(message);
 
     if (is_scan) {
-        printf("[IDS] Alerta: %s detectado de %s\n",
-               (strcmp(safe_proto, "ICMP") == 0) ? "ICMP FLOOD" : "PORT SCAN", safe_ip);
+        printf("[IDS] Alerta: %s detectado de %s\n", safe_attack, safe_ip);
     }
 }
 
