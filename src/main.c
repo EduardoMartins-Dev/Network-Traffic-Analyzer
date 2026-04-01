@@ -3,6 +3,7 @@
 #include <pcap.h>
 #include "../include/publisher.h"
 #include "../include/capture.h"
+#include "../include/replay.h"
 
 /* ========================================================================= *
  * VERIFICAÇÃO DE PRIVILÉGIOS (Multiplataforma)                              *
@@ -41,22 +42,51 @@ static void list_interfaces() {
 }
 
 int main(int argc, char *argv[]) {
-    if (!has_privileges()) {
-        fprintf(stderr, "Erro: %s\n", PRIVILEGE_MSG);
-        return 1;
+    AgentArgs args = parse_args(argc, argv);
+
+    /* ------------------------------------------------------------------- *
+     * MODO LIVE — captura de interface em tempo real                       *
+     * ------------------------------------------------------------------- */
+    if (args.mode == MODE_LIVE) {
+        if (!has_privileges()) {
+            fprintf(stderr, "Erro: %s\n", PRIVILEGE_MSG);
+            return 1;
+        }
+
+        printf("Iniciando sniffer na interface '%s' (Ctrl+C para parar)\n",
+               args.iface);
+
+        init_queue();
+        start_sniffer(args.iface);
+        close_queue();
+        return 0;
     }
 
-    if (argc != 2) {
-        printf("Uso: %s <interface>\n", argv[0]);
-        list_interfaces();
-        return 1;
+    /* ------------------------------------------------------------------- *
+     * MODO REPLAY FILE — processa um único .pcap                          *
+     * Não requer privilégios nem RabbitMQ.                                 *
+     * ------------------------------------------------------------------- */
+    if (args.mode == MODE_REPLAY_FILE) {
+        Gabarito *g = NULL;
+        if (args.expect_file)
+            g = gabarito_load(args.expect_file);
+
+        ReplayResult r = replay_file(args.pcap_file, g);
+        print_replay_result(&r);
+        gabarito_free(g);
+
+        /* Exit 1 se gabarito fornecido e score abaixo de 80% */
+        return (g && r.score < 80.0) ? 1 : 0;
     }
 
-    printf("Iniciando sniffer na interface '%s' (Ctrl+C para parar)\n", argv[1]);
-
-    init_queue();
-    start_sniffer(argv[1]);
-    close_queue();
+    /* ------------------------------------------------------------------- *
+     * MODO REPLAY DIR — processa todos os .pcap de um diretório           *
+     * Exit code 1 definido internamente se score agregado < 80%.          *
+     * ------------------------------------------------------------------- */
+    if (args.mode == MODE_REPLAY_DIR) {
+        replay_dir(args.replay_dir, args.report_file);
+        return 0;
+    }
 
     return 0;
 }

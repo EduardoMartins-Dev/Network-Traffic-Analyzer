@@ -10,7 +10,10 @@ add_executable(NetworkTrafficAnalyzer
         src/main.c
         src/capture/capture.c
         src/analysis/analyzer.c
+        src/analysis/collector.c
         src/output/publisher.c
+        src/output/cJSON.c
+        src/replay/replay.c
 )
 
 if(WIN32)
@@ -39,7 +42,7 @@ else()
     # -------------------------------------------------------------------------
     # Linux/macOS: usa libpcap nativa + librabbitmq (com suporte SSL embutido)
     # -------------------------------------------------------------------------
-    target_link_libraries(NetworkTrafficAnalyzer PRIVATE pcap rabbitmq)
+    target_link_libraries(NetworkTrafficAnalyzer PRIVATE pcap rabbitmq m)
 endif()
 
 # --- INGESTOR: Worker Python (copia para o diretório de build) ---

@@ -1,0 +1,8 @@
+{
+  "expected": [
+    {
+      "attack_type": "DNS_TUNNEL",
+      "src_ip": "192.168.1.100"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "expected": [
+    {
+      "attack_type": "BRUTE_FORCE",
+      "src_ip": "192.168.1.100",
+      "time_window": { "start_sec": 0, "end_sec": 60 }
+    }
+  ]
+}

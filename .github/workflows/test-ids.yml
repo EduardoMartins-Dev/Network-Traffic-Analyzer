@@ -1,0 +1,50 @@
+name: IDS Regression Tests
+
+on:
+  push:
+    branches: [ main, V4.0 ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            cmake \
+            build-essential \
+            libpcap-dev \
+            librabbitmq-dev
+
+      - name: Configure CMake
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Run replay tests
+        run: |
+          # Se não há pcaps ainda, apenas verifica que o binário funciona
+          if ls tests/pcaps/*.pcap 1>/dev/null 2>&1; then
+            ./build/NetworkTrafficAnalyzer \
+              --replay-dir tests/pcaps/ \
+              --report tests/report.json
+          else
+            echo "Nenhum .pcap encontrado em tests/pcaps/ — pulando replay."
+            echo "Adicione pcaps de tests/pcaps/README.md para ativar os testes."
+          fi
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ids-test-report
+          path: tests/report.json
+          if-no-files-found: ignore

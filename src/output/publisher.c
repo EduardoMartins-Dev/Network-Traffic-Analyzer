@@ -1,4 +1,5 @@
 #include "../../include/publisher.h"
+#include "../../include/collector.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,7 +23,7 @@
  * ========================================================================= */
 
 #define MAX_FRAME_SIZE  131072
-#define MAX_JSON_SIZE   512
+#define MAX_JSON_SIZE   768
 
 static amqp_connection_state_t conn;
 
@@ -105,21 +106,30 @@ void init_queue() {
            host, port, use_tls ? "sim" : "nao", id);
 }
 
-void publish_packet(const char *src_ip, int port, const char *proto, int bytes, int is_scan, const char *attack_type) {
+void publish_packet(const char *src_ip, int port, const char *proto, int bytes,
+                    int is_scan, const char *attack_type,
+                    const char *kill_chain_stage, int kc_score,
+                    const char *mitre_technique) {
     char message[MAX_JSON_SIZE];
 
-    const char *safe_ip     = src_ip      ? src_ip      : "0.0.0.0";
-    const char *safe_proto  = proto       ? proto       : "UNKNOWN";
-    const char *safe_attack = attack_type ? attack_type : "NONE";
+    const char *safe_ip     = src_ip           ? src_ip           : "0.0.0.0";
+    const char *safe_proto  = proto            ? proto            : "UNKNOWN";
+    const char *safe_attack = attack_type      ? attack_type      : "NONE";
+    const char *safe_stage  = kill_chain_stage ? kill_chain_stage : "IDLE";
+    const char *safe_mitre  = mitre_technique  ? mitre_technique  : "";
 
     snprintf(message, sizeof(message),
-             "{\"src_ip\":\"%s\", \"port\":%d, \"proto\":\"%s\", \"bytes\":%d, \"is_scan\":%d, \"attack_type\":\"%s\"}",
-             safe_ip, port, safe_proto, bytes, is_scan, safe_attack);
+             "{\"src_ip\":\"%s\",\"port\":%d,\"proto\":\"%s\",\"bytes\":%d,"
+             "\"is_scan\":%d,\"attack_type\":\"%s\","
+             "\"kill_chain_stage\":\"%s\",\"kc_score\":%d,\"mitre\":\"%s\"}",
+             safe_ip, port, safe_proto, bytes, is_scan, safe_attack,
+             safe_stage, kc_score, safe_mitre);
 
-    send_message(message);
+    if (!g_replay_mode) send_message(message);
 
     if (is_scan) {
-        printf("[IDS] Alerta: %s detectado de %s\n", safe_attack, safe_ip);
+        printf("[IDS] Alerta: %-14s | IP: %-15s | Kill Chain: %-8s | Score: %3d | MITRE: %s\n",
+               safe_attack, safe_ip, safe_stage, kc_score, safe_mitre);
     }
 }
 
