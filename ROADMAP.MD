@@ -5,7 +5,7 @@ Evolução do projeto desde um sniffer básico até um **IDS comportamental com 
 ```
 v1.0        v2.0          v3.0             v4.0              v5.0            v6.0             v7.0
 Captura → Mensageria → Agent/Server → IDS Engine → Multi-Thread → Prod + IaC → AI Narrator
-  ✅          ✅            ✅           EM BREVE        PLANEJADO       PLANEJADO        PLANEJADO
+  ✅          ✅            ✅               ✅          EM BREVE       PLANEJADO        PLANEJADO
 ```
 
 ---
@@ -46,11 +46,7 @@ Captura → Mensageria → Agent/Server → IDS Engine → Multi-Thread → Prod
 * Listagem automática de interfaces com `pcap_findalldevs`
 * CMakeLists.txt multiplataforma: Linux (libpcap) e Windows (Npcap SDK)
 
----
-
-## Próximas versões
-
-### v4.0 — IDS Engine avançado 🔜
+### v4.0 — IDS Engine avançado ✅
 
 > **Prioridade máxima.** A infraestrutura (RabbitMQ, InfluxDB, Grafana, Docker, TLS) está madura. O motor de detecção precisa acompanhar. Hoje o projeto detecta 2 tipos de ataque; esta versão leva para 8+, cobrindo a cadeia completa de reconhecimento → exploração → exfiltração.
 
@@ -90,7 +86,7 @@ Captura → Mensageria → Agent/Server → IDS Engine → Multi-Thread → Prod
 
 ---
 
-### v4.1 — PCAP Replay e Test Framework
+### v4.1 — PCAP Replay e Test Framework ✅
 
 > **Qualidade de engenharia.** Sem testes reprodutíveis, cada nova detecção pode quebrar as existentes. Esta versão cria o framework que valida o IDS com tráfego real capturado.
 
@@ -115,6 +111,8 @@ Captura → Mensageria → Agent/Server → IDS Engine → Multi-Thread → Prod
 * Fail automático se score cair abaixo de 80%
 
 ---
+
+## Próximas versões
 
 ### v5.0 — Multi-Threading e Performance
 
