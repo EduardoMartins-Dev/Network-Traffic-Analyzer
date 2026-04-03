@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(gh api:*)",
+      "Bash(curl -sL https://raw.githubusercontent.com/EduardoMartins-Dev/Network-Traffic-Analyzer/v3/ROADMAP.MD)"
+    ]
+  }
+}
