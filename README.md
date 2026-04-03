@@ -309,8 +309,12 @@ O workflow `.github/workflows/test-ids.yml` executa a cada push/PR:
 | v4.0 | IDS Engine avançado (EWMA + Kill Chain + MITRE) | ✅ |
 | v4.1 | PCAP Replay + Test Framework + CI/CD | ✅ |
 | v5.0 | Multi-Threading (pthreads + ring buffer lock-free) | 🔜 |
+| v5.1 | Validação Windows (Npcap + multi-thread) | Planejado |
 | v6.0 | Produção: VPS + Terraform + Nginx + Let's Encrypt | Planejado |
 | v7.0 | AI Narrator (LLM via Groq API em C) | Planejado |
+| v8.0 | nta-server em C + thread pool adaptativo + RabbitMQ cluster | Planejado |
+| v9.0 | Threat Intelligence (GeoIP + AbuseIPDB + IoC matching) | Planejado |
+| v10.0 | Alta Performance (AF_PACKET + TPACKET_V3 + zero-copy) | Planejado |
 
 ---
 
