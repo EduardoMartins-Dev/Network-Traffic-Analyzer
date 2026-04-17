@@ -29,11 +29,14 @@ INFLUX_BUCKET = os.getenv("INFLUX_BUCKET", "network_traffic")
 RABBIT_HOST = os.getenv("RABBIT_HOST", "localhost")
 RABBIT_PORT = int(os.getenv("RABBIT_PORT", 5674))
 QUEUE_NAME = os.getenv("QUEUE_NAME", "traffic_queue")
+METRICS_QUEUE = os.getenv("METRICS_QUEUE", "traffic_metrics")
 
 class SOCIngestor:
     """
-    Classe responsável por orquestrar a ingestão, enriquecimento (GeoIP)
-    e persistência de telemetria de segurança (IDS).
+    Consome duas filas do RabbitMQ:
+      - QUEUE_NAME     → telemetria de pacotes (batches v5.0 ou objetos soltos)
+      - METRICS_QUEUE  → métricas do pipeline (buffers, overflows, throughput)
+    Enriquece eventos com GeoIP e grava em InfluxDB.
     """
 
     def __init__(self):
@@ -41,10 +44,8 @@ class SOCIngestor:
         self._setup_influxdb()
 
     def _setup_influxdb(self) -> None:
-        """Inicializa a conexão com o banco de séries temporais."""
         try:
             self.client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
-            # Utiliza o modo Síncrono para garantir que a escrita não atrase em relação à fila
             self.write_api = self.client.write_api(write_options=SYNCHRONOUS)
             logger.info("Conectado ao InfluxDB com sucesso.")
         except Exception as e:
@@ -52,20 +53,11 @@ class SOCIngestor:
             sys.exit(1)
 
     def _get_location(self, ip: str) -> Tuple[Optional[float], Optional[float]]:
-        """
-        Consulta a localização geográfica de um IP externo usando a API ip-api.com.
-        Possui cache interno e ignora ranges de IPs privados (RFC 1918) e loopback.
-        """
-        # Filtro de IPs internos para poupar requisições e evitar timeouts desnecessários
         if not ip or ip.startswith(("127.", "192.168.", "10.", "172.")):
             return None, None
-
-        # Padrão de Memoization (Cache) para evitar rate-limits da API
         if ip in self.geo_cache:
             return self.geo_cache[ip]
-
         try:
-            # Timeout explícito de 5s para evitar bloqueio da thread do RabbitMQ
             response = requests.get(f"http://ip-api.com/json/{ip}", timeout=5).json()
             if response.get("status") == "success":
                 lat, lon = response.get("lat"), response.get("lon")
@@ -73,68 +65,100 @@ class SOCIngestor:
                 return lat, lon
         except requests.exceptions.RequestException as e:
             logger.warning(f"Erro de rede ao consultar GeoIP para {ip}: {e}")
-
         return None, None
 
-    def _process_event(self, ch, method, properties, body: bytes) -> None:
-        """
-        Callback disparado pelo RabbitMQ a cada nova mensagem na fila.
-        Analisa o JSON, enriquece e persiste no InfluxDB.
-        """
+    # --------------------------------------------------------------------------
+    # Processa UM evento (usado pelo batch e pelo modo legado)
+    # --------------------------------------------------------------------------
+    def _ingest_one(self, data: dict) -> None:
+        src_ip = data.get('src_ip', '0.0.0.0')
+        proto = data.get('proto', 'UNKNOWN')
+        is_scan = data.get('is_scan', 0)
+        bytes_count = data.get('bytes', 0)
+        port = data.get('port', 0)
+
+        point = Point("traffic") \
+            .tag("src_ip", src_ip) \
+            .tag("protocol", proto) \
+            .field("port", int(port)) \
+            .field("bytes", float(bytes_count)) \
+            .field("is_scan", float(is_scan))
+
+        # Campos adicionais da v4.0 (kill chain + MITRE) são tags para filtro
+        attack = data.get('attack_type')
+        stage = data.get('kill_chain_stage')
+        mitre = data.get('mitre')
+        if attack: point = point.tag("attack_type", attack)
+        if stage:  point = point.tag("kill_chain_stage", stage)
+        if mitre:  point = point.tag("mitre", mitre)
+        kc_score = data.get('kc_score')
+        if kc_score is not None:
+            point = point.field("kc_score", float(kc_score))
+
+        lat, lon = self._get_location(src_ip)
+        if lat is not None and lon is not None:
+            point.field("lat", float(lat)).field("lon", float(lon))
+
+        self.write_api.write(bucket=INFLUX_BUCKET, record=point)
+
+        status_icon = "🚨 [ATTACK]" if is_scan == 1 else "✅ [NORMAL]"
+        logger.info(f"{status_icon} {proto} | IP: {src_ip} | Loc: {lat},{lon}")
+
+    # --------------------------------------------------------------------------
+    # Callback da fila de TELEMETRIA: aceita array (v5.0) ou objeto (legado)
+    # --------------------------------------------------------------------------
+    def _on_traffic(self, ch, method, properties, body: bytes) -> None:
         try:
-            # Desserialização do payload em C
-            data = json.loads(body.decode('utf-8'))
-            src_ip = data.get('src_ip', '0.0.0.0')
-            proto = data.get('proto', 'UNKNOWN')
-            is_scan = data.get('is_scan', 0)
-            bytes_count = data.get('bytes', 0)
-            port = data.get('port', 0)
-
-            # Construção do "Point" (linha) para o InfluxDB
-            # Nota técnica: Casting para float em 'bytes' e 'is_scan' previne o erro HTTP 422
-            # de conflito de tipo caso o primeiro dado do bucket tenha sido ingerido como float.
-            point = Point("traffic") \
-                .tag("src_ip", src_ip) \
-                .tag("protocol", proto) \
-                .field("port", int(port)) \
-                .field("bytes", float(bytes_count)) \
-                .field("is_scan", float(is_scan))
-
-            # Enriquecimento com coordenadas geográficas
-            lat, lon = self._get_location(src_ip)
-            if lat is not None and lon is not None:
-                point.field("lat", float(lat)).field("lon", float(lon))
-
-            # Persistência no Time-Series Database
-            self.write_api.write(bucket=INFLUX_BUCKET, record=point)
-
-            # Feedback de console (Logger)
-            status_icon = "🚨 [ATTACK]" if is_scan == 1 else "✅ [NORMAL]"
-            logger.info(f"{status_icon} {proto} | IP: {src_ip} | Loc: {lat},{lon}")
-
+            payload = json.loads(body.decode('utf-8'))
+            events = payload if isinstance(payload, list) else [payload]
+            for evt in events:
+                try:
+                    self._ingest_one(evt)
+                except Exception as e:
+                    logger.error(f"Erro ao ingerir evento: {e}")
         except json.JSONDecodeError:
-            logger.error("Falha ao decodificar JSON corrompido da fila.")
+            logger.error("JSON corrompido na fila de telemetria.")
+
+    # --------------------------------------------------------------------------
+    # Callback da fila de MÉTRICAS: grava estado do pipeline em série separada
+    # --------------------------------------------------------------------------
+    def _on_metrics(self, ch, method, properties, body: bytes) -> None:
+        try:
+            m = json.loads(body.decode('utf-8'))
+            point = Point("pipeline_metrics")
+            for k, v in m.items():
+                if isinstance(v, (int, float)):
+                    point = point.field(k, float(v))
+            self.write_api.write(bucket=INFLUX_BUCKET, record=point)
+            logger.info(
+                f"📊 [METRICS] rb_pkt={m.get('rb_pkt_depth')} "
+                f"rb_evt={m.get('rb_evt_depth')} "
+                f"eps={m.get('events_per_sec')} "
+                f"overflow(pkt={m.get('rb_pkt_overflow')},evt={m.get('rb_evt_overflow')})"
+            )
+        except json.JSONDecodeError:
+            logger.error("JSON corrompido na fila de métricas.")
         except Exception as e:
-            logger.error(f"Erro ao processar evento (Verifique conflito de tipo no Bucket): {e}")
+            logger.error(f"Erro ao ingerir métricas: {e}")
 
     def start(self) -> None:
-        """Estabelece a conexão AMQP e inicia o loop principal do consumidor."""
         try:
             connection = pika.BlockingConnection(
                 pika.ConnectionParameters(host=RABBIT_HOST, port=RABBIT_PORT)
             )
             channel = connection.channel()
-            channel.queue_declare(queue=QUEUE_NAME)
+            channel.queue_declare(queue=QUEUE_NAME, durable=True)
+            channel.queue_declare(queue=METRICS_QUEUE, durable=True)
 
             logger.info("SOC Ingestor (Python) inicializado com sucesso!")
-            logger.info(f"Monitorando a fila mensageria: '{QUEUE_NAME}'")
+            logger.info(f"Monitorando filas: '{QUEUE_NAME}' e '{METRICS_QUEUE}'")
 
-            # Inicia o consumo da fila chamando _process_event para cada pacote
-            channel.basic_consume(
-                queue=QUEUE_NAME,
-                on_message_callback=self._process_event,
-                auto_ack=True
-            )
+            channel.basic_consume(queue=QUEUE_NAME,
+                                  on_message_callback=self._on_traffic,
+                                  auto_ack=True)
+            channel.basic_consume(queue=METRICS_QUEUE,
+                                  on_message_callback=self._on_metrics,
+                                  auto_ack=True)
             channel.start_consuming()
 
         except pika.exceptions.AMQPConnectionError:

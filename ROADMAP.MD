@@ -5,7 +5,7 @@ Evolução do projeto desde um sniffer básico até um **IDS comportamental com 
 ```
 v1.0        v2.0          v3.0             v4.0              v5.0            v6.0             v7.0
 Captura → Mensageria → Agent/Server → IDS Engine → Multi-Thread → Prod + IaC → AI Narrator
-  ✅          ✅            ✅               ✅          EM BREVE       PLANEJADO        PLANEJADO
+  ✅          ✅            ✅               ✅             ✅          PLANEJADO        PLANEJADO
 ```
 
 ---
@@ -112,29 +112,29 @@ Captura → Mensageria → Agent/Server → IDS Engine → Multi-Thread → Prod
 
 ---
 
-## Próximas versões
-
-### v5.0 — Multi-Threading e Performance
+### v5.0 — Multi-Threading e Performance ✅
 
 > **Recuperar throughput.** As novas detecções da v4.0 adicionam overhead ao pipeline single-thread. Esta versão separa captura, análise e publicação em threads independentes, triplicando o throughput.
 
 **Pipeline multi-thread com pthreads:**
 
-* Thread 1 (captura): `pcap_loop()` → ring buffer lock-free. Prioridade SCHED_FIFO
+* Thread 1 (captura): `pcap_loop()` → ring buffer lock-free. Prioridade SCHED_FIFO (best-effort)
 * Thread 2 (análise): ring buffer → `analyzer.c` → segundo ring buffer. Roda EWMA + correlator
-* Thread 3 (publicação): ring buffer → batch AMQP publish. Agrupa N eventos por envio
+* Thread 3 (publicação): ring buffer → batch AMQP publish. Agrupa N eventos em array JSON
+* Thread 4 (métricas): publica profundidade dos buffers, overflows e throughput em routing key separada
 
 **Ring buffer lock-free:**
 
 * Implementação SPSC (Single Producer, Single Consumer) sem mutex
-* Baseado em `__atomic_load` / `__atomic_store` com memory ordering
-* Tamanho configurável via env var `AGENT_BUFFER_SIZE` (default: 4096 slots)
-* Métricas de overflow: contador de pacotes descartados por buffer cheio
+* Baseado em C11 `<stdatomic.h>` com memory ordering acquire/release
+* Tamanho configurável via env var `AGENT_BUFFER_SIZE` (default: 4096 slots; arredondado para pow2)
+* Contador atômico de overflow para pacotes descartados por buffer cheio
 
 **Batch publishing:**
 
-* Acumula N eventos (default: 50) ou timeout de 100ms antes de publicar
-* Reduz overhead de I/O AMQP em ~10x
+* Acumula N eventos (default: `AGENT_BATCH_SIZE=50`) ou timeout de `AGENT_BATCH_TIMEOUT_MS=100`
+* Serializa todos os eventos em um único array JSON com cJSON e publica em uma única chamada AMQP
+* Ingestor atualizado para aceitar tanto arrays (v5.0) quanto objetos únicos (compat)
 
 **Impacto estimado:**
 
@@ -143,6 +143,8 @@ Captura → Mensageria → Agent/Server → IDS Engine → Multi-Thread → Prod
 * Latência de publicação: reduzida ~10x com batching
 
 ---
+
+## Próximas versões
 
 ### v5.1 — Validação Windows
 

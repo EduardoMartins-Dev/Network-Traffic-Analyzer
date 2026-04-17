@@ -1,7 +1,7 @@
 # Network Traffic Analyzer
 
 ![Status](https://img.shields.io/badge/Status-Development-orange?style=for-the-badge)
-![Version](https://img.shields.io/badge/Version-4.1-blueviolet?style=for-the-badge)
+![Version](https://img.shields.io/badge/Version-5.0-blueviolet?style=for-the-badge)
 ![Language](https://img.shields.io/badge/Language-C11-blue?style=for-the-badge&logo=c&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-lightgrey?style=for-the-badge)
 ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-Messaging-FF6600?style=for-the-badge&logo=rabbitmq&logoColor=white)
@@ -49,6 +49,31 @@ Cada IP rastreado mantém médias móveis exponencialmente ponderadas de pps, po
 Máquina de estados por IP: `IDLE → RECON → EXPLOIT → EXFIL → COMPLETE`
 
 Cada detecção avança o estágio e acumula um score 0–100. Todos os eventos de um mesmo incidente são correlacionados e publicados com `kill_chain_stage`, `kc_score` e `mitre_technique` no JSON.
+
+---
+
+## Pipeline Multi-Thread (v5.0)
+
+O agente roda 4 threads conectadas por ring buffers **SPSC lock-free** (C11 atomics, acquire/release):
+
+```
+┌──────────────┐  rb_pkt   ┌──────────────┐  rb_evt   ┌──────────────┐
+│  capture_th  │ ────────► │  analysis_th │ ────────► │  publish_th  │
+│ (SCHED_FIFO) │ pkt_slot  │  (analyzer)  │ event_slot│ (batch AMQP) │
+└──────────────┘           └──────────────┘           └──────────────┘
+                                                     │
+                                           ┌─────────┴──────────┐
+                                           │    metrics_th      │
+                                           │ (routing separada) │
+                                           └────────────────────┘
+```
+
+- **captura** eleva prioridade com `SCHED_FIFO` e chama `pcap_loop`, copiando cada pacote em `rb_pkt` e retornando imediatamente.
+- **análise** consome `rb_pkt`, executa EWMA + kill chain e enfileira eventos em `rb_evt`.
+- **publicação** agrupa até `AGENT_BATCH_SIZE` eventos (ou `AGENT_BATCH_TIMEOUT_MS`) em um único array JSON via cJSON e dispara uma única chamada AMQP.
+- **métricas** publica periodicamente em `AGENT_METRICS_QUEUE` (profundidade dos buffers, overflows, events/s).
+
+Shutdown gracioso: `SIGINT`/`SIGTERM` → `pcap_breakloop` → threads drenam a pipeline e fazem flush final.
 
 ---
 
@@ -102,19 +127,24 @@ Network-Traffic-Analyzer/
 │   ├── capture.h         # Interface da camada de captura
 │   ├── cJSON.h           # Parser JSON (embutido)
 │   ├── collector.h       # Coletor de detecções para replay (v4.1)
-│   ├── publisher.h       # Interface do cliente AMQP
+│   ├── pipeline.h        # Pipeline multi-thread e slots SPSC (v5.0)
+│   ├── publisher.h       # Cliente AMQP + batch sender + métricas (v5.0)
+│   ├── ringbuf.h         # Ring buffer SPSC lock-free (v5.0)
 │   └── replay.h          # Framework de replay e test (v4.1)
 ├── src/
 │   ├── analysis/
 │   │   ├── analyzer.c    # IDS: 10 detectores + EWMA + Kill Chain
 │   │   └── collector.c   # Array em memória de eventos detectados
 │   ├── capture/
-│   │   └── capture.c     # Captura via libpcap / Npcap
+│   │   └── capture.c     # Captura via libpcap / Npcap (push no rb_pkt)
+│   ├── core/
+│   │   ├── ringbuf.c     # SPSC lock-free (C11 atomics)
+│   │   └── pipeline.c    # 4 threads: capture / analysis / publish / metrics
 │   ├── ingestor/
-│   │   └── data_ingestor.py
+│   │   └── data_ingestor.py   # Consome telemetria + métricas (v5.0)
 │   ├── output/
 │   │   ├── cJSON.c
-│   │   └── publisher.c   # AMQP com kill_chain_stage + MITRE no JSON
+│   │   └── publisher.c   # Batch AMQP com array JSON + routing key metrics
 │   ├── replay/
 │   │   └── replay.c      # --replay / --replay-dir / gabarito JSON
 │   └── main.c
@@ -231,6 +261,11 @@ cd build && python3 data_ingestor.py
 | `AGENT_QUEUE` | `traffic_queue` | Nome da fila |
 | `AGENT_USE_TLS` | `0` | `1` ativa TLS/SSL |
 | `AGENT_CA_CERT` | _(nenhum)_ | Caminho para o certificado CA `.pem` |
+| `AGENT_METRICS_QUEUE` | `traffic_metrics` | Fila de métricas do pipeline (v5.0) |
+| `AGENT_BUFFER_SIZE` | `4096` | Slots por ring buffer SPSC (arredondado para pow2) |
+| `AGENT_BATCH_SIZE` | `50` | Eventos por publicação AMQP |
+| `AGENT_BATCH_TIMEOUT_MS` | `100` | Flush do batch mesmo sem atingir `AGENT_BATCH_SIZE` |
+| `AGENT_METRICS_INTERVAL_SEC` | `10` | Intervalo de publicação da thread de métricas |
 
 ```bash
 # Exemplo — agente remoto com TLS
@@ -248,17 +283,37 @@ sudo ./build/NetworkTrafficAnalyzer eth0
 
 ## Formato do Evento JSON publicado
 
+A partir da v5.0 o agente publica **lotes** (arrays) de eventos em uma única mensagem AMQP:
+
+```json
+[
+  {
+    "src_ip": "192.168.1.50",
+    "port": 22,
+    "proto": "TCP",
+    "bytes": 74,
+    "is_scan": 1,
+    "attack_type": "BRUTE_FORCE",
+    "kill_chain_stage": "EXPLOIT",
+    "kc_score": 60,
+    "mitre": "T1110"
+  },
+  { "src_ip": "10.0.0.5", "port": 53, "proto": "UDP", "bytes": 512, "is_scan": 0,
+    "attack_type": "NONE", "kill_chain_stage": "IDLE", "kc_score": 0, "mitre": "" }
+]
+```
+
+Mensagens de **métricas** (fila `traffic_metrics`):
+
 ```json
 {
-  "src_ip": "192.168.1.50",
-  "port": 22,
-  "proto": "TCP",
-  "bytes": 74,
-  "is_scan": 1,
-  "attack_type": "BRUTE_FORCE",
-  "kill_chain_stage": "EXPLOIT",
-  "kc_score": 60,
-  "mitre_technique": "T1110"
+  "rb_pkt_depth": 142,
+  "rb_evt_depth": 8,
+  "rb_pkt_overflow": 0,
+  "rb_evt_overflow": 0,
+  "batches_sent": 3127,
+  "events_sent": 156340,
+  "events_per_sec": 4891.23
 }
 ```
 
@@ -308,7 +363,7 @@ O workflow `.github/workflows/test-ids.yml` executa a cada push/PR:
 | v3.0 | Arquitetura Agent/Server + TLS | ✅ |
 | v4.0 | IDS Engine avançado (EWMA + Kill Chain + MITRE) | ✅ |
 | v4.1 | PCAP Replay + Test Framework + CI/CD | ✅ |
-| v5.0 | Multi-Threading (pthreads + ring buffer lock-free) | 🔜 |
+| v5.0 | Multi-Threading (pthreads + ring buffer lock-free + batch AMQP) | ✅ |
 | v5.1 | Validação Windows (Npcap + multi-thread) | Planejado |
 | v6.0 | Produção: VPS + Terraform + Nginx + Let's Encrypt | Planejado |
 | v7.0 | AI Narrator (LLM via Groq API em C) | Planejado |
