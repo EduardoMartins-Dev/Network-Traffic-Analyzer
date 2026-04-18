@@ -1,6 +1,7 @@
 #ifndef NETWORK_TRAFFIC_ANALYZER_CAPTURE_H
 #define NETWORK_TRAFFIC_ANALYZER_CAPTURE_H
 
+#include <sys/types.h>   /* u_char/u_int (necessário antes de pcap.h no Fedora/glibc) */
 #include <pcap.h>
 #define SNAP_LEN 1518
 

@@ -150,53 +150,170 @@ Network-Traffic-Analyzer/
 │   └── main.c
 ├── tests/
 │   └── pcaps/            # Gabaritos JSON por tipo de ataque
+├── scripts/
+│   ├── server-up.sh      # Sobe compose + venv + ingestor em um comando
+│   └── smoke-test.sh     # Build + replay + sniff curto (v5.0)
+├── deploy/
+│   ├── agent.env.example # Template de variáveis de ambiente do agente
+│   └── agent.service     # Unit systemd com capabilities + hardening
 ├── .github/
 │   └── workflows/
 │       └── test-ids.yml  # CI/CD: build + replay, falha se score < 80%
 ├── docker-compose.yml
+├── requirements.txt
 ├── CMakeLists.txt
 └── README.md
 ```
 
 ---
 
-## Pré-requisitos
+## Instalação
 
-### Linux (Ubuntu / Debian / Kali)
+A arquitetura tem dois papéis, tipicamente em máquinas separadas:
 
-```bash
-sudo apt update
-sudo apt install build-essential cmake git
-sudo apt install libpcap-dev librabbitmq-dev
-sudo apt install docker.io docker-compose-plugin
-```
+- **Servidor Central** — agrega eventos de múltiplos agentes (RabbitMQ + InfluxDB + Grafana + ingestor Python).
+- **Agente Sensor** — captura tráfego local e publica no servidor (binário C).
 
-### Windows
-
-- [Npcap](https://npcap.com/) instalado com "WinPcap API compatibility mode"
-- [Npcap SDK](https://npcap.com/dist/npcap-sdk-1.13.zip) extraído em `C:\Npcap-sdk`
-- [librabbitmq-c](https://github.com/alanxz/rabbitmq-c) compilado com CMake
-- Visual Studio 2022 ou MinGW-w64
+As dependências não se sobrepõem: servidor não precisa de `libpcap` nem
+compilador; agente não precisa de Docker nem Python.
 
 ---
 
-## Compilação
+### Servidor Central
 
-### Linux
+#### Pré-requisitos
+
+- Runtime OCI: Docker Engine, Docker Desktop, Podman (rootless) ou Podman Desktop
+- Python 3.10+ com `pip` e `venv`
+
+**Debian / Ubuntu / Kali:**
+```bash
+sudo apt update
+sudo apt install docker.io docker-compose python3 python3-venv python3-pip
+```
+
+**Fedora / RHEL / CentOS:**
+```bash
+sudo dnf install moby-engine docker-compose python3 python3-pip
+```
+
+> `docker compose` (plugin, sem hífen) e `podman-compose` são equivalentes ao
+> `docker-compose` usado nos comandos deste README.
+
+#### Subir o stack
+
+Atalho (detecta runtime, sobe compose + venv + ingestor):
+```bash
+./scripts/server-up.sh                 # tudo em foreground
+./scripts/server-up.sh --no-ingest     # só infra (primeiro setup)
+```
+
+Manual:
+```bash
+docker-compose up -d
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cd build && python3 data_ingestor.py
+```
+
+Acesso:
+- Grafana — http://\<host>:3000 · admin/admin
+- RabbitMQ Management — http://\<host>:15673 · guest/guest
+
+#### Agentes remotos: user dedicado no RabbitMQ
+
+O user `guest` **só aceita login de `localhost`**. Para cada agente remoto:
+
+```bash
+docker exec rabbitmq rabbitmqctl add_user agente-01 <senha-forte>
+docker exec rabbitmq rabbitmqctl set_permissions -p / agente-01 ".*" ".*" ".*"
+```
+
+Depois preencha `AGENT_ID=agente-01` / `AGENT_TOKEN=<senha-forte>` no arquivo
+de ambiente do agente.
+
+---
+
+### Agente Sensor
+
+#### Pré-requisitos
+
+**Debian / Ubuntu / Kali:**
+```bash
+sudo apt update
+sudo apt install build-essential cmake git libpcap-dev librabbitmq-dev
+```
+
+**Fedora / RHEL / CentOS:**
+```bash
+sudo dnf install gcc cmake make git libpcap-devel librabbitmq-devel
+```
+
+**FreeBSD:**
+```sh
+sudo pkg install cmake git rabbitmq-c    # libpcap já vem na base
+```
+
+> No FreeBSD as interfaces seguem o driver: `em0`, `igb0`, `re0`, `wlan0`.
+
+#### Compilar
 
 ```bash
 cmake -B build -S .
-cmake --build build
+cmake --build build -j$(nproc)
 ```
 
-### Windows (Visual Studio)
+Binário gerado: `build/NetworkTrafficAnalyzer`.
+
+#### Capturar sem sudo (recomendado)
+
+```bash
+sudo setcap cap_net_raw,cap_net_admin+ep ./build/NetworkTrafficAnalyzer
+```
+
+Reaplicar após cada rebuild — o arquivo é substituído e perde a capability.
+
+#### Configurar
+
+```bash
+sudo install -Dm640 deploy/agent.env.example /etc/default/nta-agent
+sudo $EDITOR /etc/default/nta-agent    # preencha AGENT_SERVER_HOST e AGENT_TOKEN
+```
+
+Todas as variáveis estão documentadas em
+[Configuração do Agente](#configuração-do-agente-variáveis-de-ambiente).
+
+#### Rodar
+
+**One-shot (desenvolvimento):**
+```bash
+set -a; source /etc/default/nta-agent; set +a
+./build/NetworkTrafficAnalyzer "$AGENT_IFACE"
+```
+
+**Produção (systemd):**
+```bash
+sudo install -Dm755 build/NetworkTrafficAnalyzer /opt/nta-agent/NetworkTrafficAnalyzer
+sudo install -Dm644 deploy/agent.service /etc/systemd/system/nta-agent.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now nta-agent
+sudo journalctl -u nta-agent -f
+```
+
+#### Windows (agente)
+
+- [Npcap](https://npcap.com/) com "WinPcap API compatibility mode"
+- [Npcap SDK](https://npcap.com/dist/npcap-sdk-1.13.zip) extraído em `C:\Npcap-sdk`
+- [librabbitmq-c](https://github.com/alanxz/rabbitmq-c) compilado com CMake
+- Visual Studio 2022 ou MinGW-w64
 
 ```powershell
 cmake -B build -S . -DNPCAP_SDK_DIR="C:/Npcap-sdk"
 cmake --build build --config Release
 ```
 
-Binário gerado: `build/NetworkTrafficAnalyzer`
+> Pipeline multi-thread (v5.0) usa `pthreads` + `SCHED_FIFO`, específicos de
+> Linux. Suporte completo no Windows planejado para a **v5.1**.
 
 ---
 
@@ -206,15 +323,15 @@ Binário gerado: `build/NetworkTrafficAnalyzer`
 
 ```bash
 # Sem argumentos: lista interfaces disponíveis
-sudo ./build/NetworkTrafficAnalyzer
+./build/NetworkTrafficAnalyzer
 
-# Com interface escolhida
-sudo ./build/NetworkTrafficAnalyzer eth0
+# Com interface escolhida (precisa root OU setcap aplicado)
+./build/NetworkTrafficAnalyzer eth0
 ```
 
 ### Modo replay — validar IDS contra pcap (v4.1)
 
-Não requer `sudo` nem RabbitMQ em execução.
+Não requer privilégio nem RabbitMQ em execução.
 
 ```bash
 # Arquivo único com gabarito
@@ -228,6 +345,11 @@ Não requer `sudo` nem RabbitMQ em execução.
   --report tests/report.json
 ```
 
+> ⚠️ O diretório `tests/pcaps/` contém apenas os **gabaritos** (`.json`).
+> Os arquivos `.pcap` precisam ser baixados de datasets públicos antes de
+> rodar — consulte [tests/pcaps/README.md](tests/pcaps/README.md). Sem eles,
+> o replay processa zero arquivos e sai com sucesso vazio.
+
 Saída esperada:
 
 ```
@@ -240,11 +362,14 @@ RESULTADO      ATTACK_TYPE     SRC_IP
 Score: 100.0%  (1/1 detecções corretas)
 ```
 
-### Infraestrutura do servidor central
+### Smoke test — validação rápida da v5.0
+
+Atalho que executa **build + replay-dir** (e opcionalmente um sniff curto na
+interface real):
 
 ```bash
-docker compose up -d
-cd build && python3 data_ingestor.py
+./scripts/smoke-test.sh                      # build + replay
+sudo ./scripts/smoke-test.sh --live eth0     # adiciona 10s de captura
 ```
 
 ---

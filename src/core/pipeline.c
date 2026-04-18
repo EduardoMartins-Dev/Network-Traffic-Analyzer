@@ -1,4 +1,8 @@
-#define _POSIX_C_SOURCE 200809L
+/* Linux/glibc esconde os tipos BSD (u_char/u_int) sem _GNU_SOURCE.
+ * No FreeBSD, <sys/types.h> já os expõe nativamente. */
+#ifdef __linux__
+#define _GNU_SOURCE
+#endif
 #include "../../include/pipeline.h"
 #include "../../include/ringbuf.h"
 #include "../../include/capture.h"

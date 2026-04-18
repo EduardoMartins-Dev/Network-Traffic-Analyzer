@@ -15,6 +15,23 @@
     #include <shlobj.h>
     static int has_privileges() { return IsUserAnAdmin(); }
     static const char *PRIVILEGE_MSG = "Execute como Administrador.";
+#elif defined(__linux__)
+    #include <unistd.h>
+    #include <sys/syscall.h>
+    #include <linux/capability.h>
+    /* Aceita tanto root quanto binário com `setcap cap_net_raw,cap_net_admin+ep`. */
+    static int has_cap_net_raw(void) {
+        struct __user_cap_header_struct hdr = {
+            .version = _LINUX_CAPABILITY_VERSION_3, .pid = 0,
+        };
+        struct __user_cap_data_struct data[2] = { {0, 0, 0}, {0, 0, 0} };
+        if (syscall(SYS_capget, &hdr, data) != 0) return 0;
+        return (data[0].effective & (1u << CAP_NET_RAW)) != 0;
+    }
+    static int has_privileges(void) { return getuid() == 0 || has_cap_net_raw(); }
+    static const char *PRIVILEGE_MSG =
+        "Execute com sudo/root ou aplique "
+        "`sudo setcap cap_net_raw,cap_net_admin+ep` no binário.";
 #else
     #include <unistd.h>
     static int has_privileges() { return getuid() == 0; }

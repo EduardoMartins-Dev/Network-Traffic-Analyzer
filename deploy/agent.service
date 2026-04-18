@@ -1,0 +1,38 @@
+[Unit]
+Description=Network Traffic Analyzer — sensor agent
+Documentation=https://github.com/barbosa/Network-Traffic-Analyzer
+After=network-online.target
+Wants=network-online.target
+# Desiste depois de 5 falhas em 60s para não mascarar bug real.
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/nta-agent
+ExecStart=/opt/nta-agent/NetworkTrafficAnalyzer ${AGENT_IFACE}
+
+# Reinicia em caso de falha (ex.: servidor central indisponível).
+Restart=on-failure
+RestartSec=5
+
+# Capabilities: CAP_NET_RAW + CAP_NET_ADMIN substituem sudo.
+# Alternativamente, aplique `setcap cap_net_raw,cap_net_admin+ep` no binário
+# e rode como usuário não-root via User=nta-agent.
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+
+# Hardening — o agente só precisa ler pacotes e abrir um socket TCP.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

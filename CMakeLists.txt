@@ -42,9 +42,16 @@ if(WIN32)
     )
 else()
     # -------------------------------------------------------------------------
-    # Linux/macOS: libpcap + librabbitmq + pthreads (pipeline v5.0)
+    # Linux / FreeBSD / macOS: libpcap + librabbitmq + pthreads (pipeline v5.0)
     # -------------------------------------------------------------------------
     find_package(Threads REQUIRED)
+
+    # FreeBSD instala libs de terceiros via ports/pkg em /usr/local/{lib,include}.
+    if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+        include_directories(/usr/local/include)
+        link_directories(/usr/local/lib)
+    endif()
+
     target_link_libraries(NetworkTrafficAnalyzer PRIVATE
         pcap rabbitmq m Threads::Threads
     )
