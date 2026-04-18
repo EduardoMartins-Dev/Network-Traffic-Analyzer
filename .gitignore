@@ -1,7 +1,9 @@
 .vscode/
 .idea/
+/build
 /cmake
 /cmake-build-debug
+session
 traffic_log.txt
 /influxdb_config
 /influxdb_data
