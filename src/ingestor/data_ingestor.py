@@ -1,12 +1,15 @@
 import os
 import sys
 import json
+import time
 import pika
 import logging
 import requests
 from typing import Tuple, Optional
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
+
+import narrator
 
 # ==============================================================================
 # CONFIGURAÇÃO DE LOGS (Padrão Corporativo)
@@ -70,7 +73,7 @@ class SOCIngestor:
     # --------------------------------------------------------------------------
     # Processa UM evento (usado pelo batch e pelo modo legado)
     # --------------------------------------------------------------------------
-    def _ingest_one(self, data: dict) -> None:
+    def _ingest_one(self, data: dict, agent_id: str = "unknown") -> None:
         src_ip = data.get('src_ip', '0.0.0.0')
         proto = data.get('proto', 'UNKNOWN')
         is_scan = data.get('is_scan', 0)
@@ -78,6 +81,7 @@ class SOCIngestor:
         port = data.get('port', 0)
 
         point = Point("traffic") \
+            .tag("agent_id", agent_id) \
             .tag("src_ip", src_ip) \
             .tag("protocol", proto) \
             .field("port", int(port)) \
@@ -104,16 +108,42 @@ class SOCIngestor:
         status_icon = "🚨 [ATTACK]" if is_scan == 1 else "✅ [NORMAL]"
         logger.info(f"{status_icon} {proto} | IP: {src_ip} | Loc: {lat},{lon}")
 
+        if narrator.should_narrate(data):
+            self._narrate(data, agent_id)
+
+    # --------------------------------------------------------------------------
+    # Narrativa LLM pra incidentes de score alto (kc_score >= NARRATOR_MIN_SCORE)
+    # Chamada síncrona — Ollama/Groq devem responder em < NARRATOR_TIMEOUT
+    # --------------------------------------------------------------------------
+    def _narrate(self, data: dict, agent_id: str) -> None:
+        text = narrator.narrate(data, agent_id)
+        if not text:
+            return
+        np = (
+            Point("incident_narrative")
+            .tag("agent_id", agent_id)
+            .tag("src_ip", data.get("src_ip", "0.0.0.0"))
+            .tag("attack_type", data.get("attack_type", "UNKNOWN"))
+            .tag("kill_chain_stage", data.get("kill_chain_stage", "UNKNOWN"))
+            .tag("backend", narrator.backend_label())
+            .field("narrative", text)
+            .field("kc_score", float(data.get("kc_score", 0)))
+        )
+        self.write_api.write(bucket=INFLUX_BUCKET, record=np)
+        logger.info("📝 [NARRATIVE] %s | %s | %d chars",
+                    data.get("src_ip"), data.get("attack_type"), len(text))
+
     # --------------------------------------------------------------------------
     # Callback da fila de TELEMETRIA: aceita array (v5.0) ou objeto (legado)
     # --------------------------------------------------------------------------
     def _on_traffic(self, ch, method, properties, body: bytes) -> None:
         try:
+            agent_id = (properties.user_id if properties and properties.user_id else "unknown")
             payload = json.loads(body.decode('utf-8'))
             events = payload if isinstance(payload, list) else [payload]
             for evt in events:
                 try:
-                    self._ingest_one(evt)
+                    self._ingest_one(evt, agent_id)
                 except Exception as e:
                     logger.error(f"Erro ao ingerir evento: {e}")
         except json.JSONDecodeError:
@@ -124,8 +154,9 @@ class SOCIngestor:
     # --------------------------------------------------------------------------
     def _on_metrics(self, ch, method, properties, body: bytes) -> None:
         try:
+            agent_id = (properties.user_id if properties and properties.user_id else "unknown")
             m = json.loads(body.decode('utf-8'))
-            point = Point("pipeline_metrics")
+            point = Point("pipeline_metrics").tag("agent_id", agent_id)
             for k, v in m.items():
                 if isinstance(v, (int, float)):
                     point = point.field(k, float(v))
@@ -142,32 +173,45 @@ class SOCIngestor:
             logger.error(f"Erro ao ingerir métricas: {e}")
 
     def start(self) -> None:
-        try:
-            connection = pika.BlockingConnection(
-                pika.ConnectionParameters(host=RABBIT_HOST, port=RABBIT_PORT)
-            )
-            channel = connection.channel()
-            channel.queue_declare(queue=QUEUE_NAME, durable=True)
-            channel.queue_declare(queue=METRICS_QUEUE, durable=True)
+        retry_delay = 2
+        max_delay = 30
+        while True:
+            connection = None
+            try:
+                connection = pika.BlockingConnection(
+                    pika.ConnectionParameters(
+                        host=RABBIT_HOST, port=RABBIT_PORT,
+                        heartbeat=30, blocked_connection_timeout=60,
+                    )
+                )
+                channel = connection.channel()
+                channel.queue_declare(queue=QUEUE_NAME, durable=True)
+                channel.queue_declare(queue=METRICS_QUEUE, durable=True)
 
-            logger.info("SOC Ingestor (Python) inicializado com sucesso!")
-            logger.info(f"Monitorando filas: '{QUEUE_NAME}' e '{METRICS_QUEUE}'")
+                logger.info(f"SOC Ingestor conectado. Filas: '{QUEUE_NAME}', '{METRICS_QUEUE}'")
 
-            channel.basic_consume(queue=QUEUE_NAME,
-                                  on_message_callback=self._on_traffic,
-                                  auto_ack=True)
-            channel.basic_consume(queue=METRICS_QUEUE,
-                                  on_message_callback=self._on_metrics,
-                                  auto_ack=True)
-            channel.start_consuming()
-
-        except pika.exceptions.AMQPConnectionError:
-            logger.critical("Falha de conexão com RabbitMQ. O serviço está online?")
-        except KeyboardInterrupt:
-            logger.info("Sinal de interrupção recebido. Desligando ingestor com segurança.")
-        finally:
-            if 'connection' in locals() and connection.is_open:
-                connection.close()
+                channel.basic_consume(queue=QUEUE_NAME,
+                                      on_message_callback=self._on_traffic,
+                                      auto_ack=True)
+                channel.basic_consume(queue=METRICS_QUEUE,
+                                      on_message_callback=self._on_metrics,
+                                      auto_ack=True)
+                retry_delay = 2
+                channel.start_consuming()
+            except KeyboardInterrupt:
+                logger.info("Sinal de interrupção recebido. Encerrando.")
+                break
+            except Exception as e:
+                logger.warning("Conexão RabbitMQ perdida (%s: %s). Reconectando em %ds...",
+                               type(e).__name__, e, retry_delay)
+            finally:
+                if connection is not None and connection.is_open:
+                    try:
+                        connection.close()
+                    except Exception:
+                        pass
+            time.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, max_delay)
 
 # ==============================================================================
 # ENTRY POINT
