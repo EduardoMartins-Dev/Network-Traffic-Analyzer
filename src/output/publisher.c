@@ -35,6 +35,7 @@ static pthread_mutex_t          amqp_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static char g_queue_name[MAX_QUEUE_NAME]  = "traffic_queue";
 static char g_metrics_queue[MAX_QUEUE_NAME] = "traffic_metrics";
+static char g_agent_id[128]               = "guest";
 
 static const char *env_or(const char *var, const char *fallback) {
     const char *val = getenv(var);
@@ -57,6 +58,7 @@ void init_queue(void) {
 
     strncpy(g_queue_name,    queue,   sizeof(g_queue_name)    - 1);
     strncpy(g_metrics_queue, metrics, sizeof(g_metrics_queue) - 1);
+    strncpy(g_agent_id,      id,      sizeof(g_agent_id)      - 1);
 
     conn = amqp_new_connection();
     amqp_socket_t *socket = NULL;
@@ -184,9 +186,10 @@ void publisher_send_batch(const event_slot_t *batch, int count) {
     if (!msg) return;
 
     amqp_basic_properties_t props;
-    props._flags        = AMQP_BASIC_CONTENT_TYPE_FLAG | AMQP_BASIC_DELIVERY_MODE_FLAG;
+    props._flags        = AMQP_BASIC_CONTENT_TYPE_FLAG | AMQP_BASIC_DELIVERY_MODE_FLAG | AMQP_BASIC_USER_ID_FLAG;
     props.content_type  = amqp_cstring_bytes("application/json");
     props.delivery_mode = 2;  /* persistente */
+    props.user_id       = amqp_cstring_bytes(g_agent_id);  /* broker valida contra login */
 
     pthread_mutex_lock(&amqp_mutex);
     amqp_basic_publish(conn, 1, amqp_empty_bytes,
@@ -204,9 +207,10 @@ void publisher_send_metrics(const char *json_payload) {
     if (!json_payload || !*json_payload) return;
 
     amqp_basic_properties_t props;
-    props._flags        = AMQP_BASIC_CONTENT_TYPE_FLAG | AMQP_BASIC_DELIVERY_MODE_FLAG;
+    props._flags        = AMQP_BASIC_CONTENT_TYPE_FLAG | AMQP_BASIC_DELIVERY_MODE_FLAG | AMQP_BASIC_USER_ID_FLAG;
     props.content_type  = amqp_cstring_bytes("application/json");
     props.delivery_mode = 1;  /* efêmero — métrica antiga não serve */
+    props.user_id       = amqp_cstring_bytes(g_agent_id);
 
     pthread_mutex_lock(&amqp_mutex);
     amqp_basic_publish(conn, 1, amqp_empty_bytes,
