@@ -169,9 +169,40 @@ Network-Traffic-Analyzer/
 
 ## Instalação
 
-A arquitetura tem dois papéis, tipicamente em máquinas separadas:
+### Caminho rápido (recomendado)
 
-- **Servidor Central** — agrega eventos de múltiplos agentes (RabbitMQ + InfluxDB + Grafana + ingestor Python).
+Um comando do clone até o stack rodando:
+
+```bash
+make quickstart
+# ou: ./scripts/quickstart.sh
+```
+
+Equivale a `install.sh` (instala dependências + builda agente) → `up.sh` (sobe
+stack docker + ingestor) → `smoke-test.sh` (valida com replay). Idempotente.
+
+Outros atalhos:
+
+```bash
+make install                # só instala deps + builda (não sobe nada)
+make install-server         # só dependências do servidor
+make install-agent          # só dependências/build do agente
+make up                     # sobe stack (background)
+make up-llm                 # idem + baixa modelo Ollama (~2 GB)
+make down                   # derruba tudo
+make help                   # lista todos os targets
+```
+
+`scripts/install.sh` detecta automaticamente Debian/Ubuntu/Kali (apt),
+Fedora/RHEL/CentOS (dnf), Arch (pacman), FreeBSD (pkg) e macOS (brew).
+
+---
+
+### Arquitetura
+
+Dois papéis, tipicamente em máquinas separadas:
+
+- **Servidor Central** — agrega eventos de múltiplos agentes (RabbitMQ + InfluxDB + Grafana + Ollama + ingestor Python).
 - **Agente Sensor** — captura tráfego local e publica no servidor (binário C).
 
 As dependências não se sobrepõem: servidor não precisa de `libpcap` nem
@@ -179,7 +210,9 @@ compilador; agente não precisa de Docker nem Python.
 
 ---
 
-### Servidor Central
+### Servidor Central — instalação manual
+
+Use só se `make install-server` não funcionar no seu SO.
 
 #### Pré-requisitos
 
@@ -189,7 +222,7 @@ compilador; agente não precisa de Docker nem Python.
 **Debian / Ubuntu / Kali:**
 ```bash
 sudo apt update
-sudo apt install docker.io docker-compose python3 python3-venv python3-pip
+sudo apt install docker.io docker-compose-plugin python3 python3-venv python3-pip
 ```
 
 **Fedora / RHEL / CentOS:**
@@ -202,22 +235,23 @@ sudo dnf install moby-engine docker-compose python3 python3-pip
 
 #### Subir o stack
 
-Atalho (detecta runtime, sobe compose + venv + ingestor):
 ```bash
-./scripts/server-up.sh                 # tudo em foreground
-./scripts/server-up.sh --no-ingest     # só infra (primeiro setup)
+./scripts/up.sh                 # ingestor em background (default)
+./scripts/up.sh --foreground    # ingestor em foreground (Ctrl+C para parar)
+./scripts/up.sh --no-ingest     # só infra docker
+./scripts/up.sh --pull-llm      # idem + baixa modelo Ollama
 ```
 
-Manual:
+Manual (sem scripts):
 ```bash
-docker-compose up -d
+docker compose up -d
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cd build && python3 data_ingestor.py
 ```
 
 Acesso:
-- Grafana — http://\<host>:3000 · admin/admin
+- Grafana — http://\<host>:3000 · admin/admin *(datasource InfluxDB + dashboard "Network Traffic Analyzer — Visão Geral" já provisionados em `grafana/`)*
 - RabbitMQ Management — http://\<host>:15673 · guest/guest
 
 #### Agentes remotos: user dedicado no RabbitMQ
@@ -234,24 +268,26 @@ de ambiente do agente.
 
 ---
 
-### Agente Sensor
+### Agente Sensor — instalação manual
+
+Use só se `make install-agent` não funcionar.
 
 #### Pré-requisitos
 
 **Debian / Ubuntu / Kali:**
 ```bash
 sudo apt update
-sudo apt install build-essential cmake git libpcap-dev librabbitmq-dev
+sudo apt install build-essential cmake git libpcap-dev librabbitmq-dev libcurl4-openssl-dev libmaxminddb-dev pkg-config
 ```
 
 **Fedora / RHEL / CentOS:**
 ```bash
-sudo dnf install gcc cmake make git libpcap-devel librabbitmq-devel
+sudo dnf install gcc cmake make git libpcap-devel librabbitmq-devel libcurl-devel libmaxminddb-devel pkgconfig
 ```
 
 **FreeBSD:**
 ```sh
-sudo pkg install cmake git rabbitmq-c    # libpcap já vem na base
+sudo pkg install cmake git rabbitmq-c curl libmaxminddb pkgconf    # libpcap já vem na base
 ```
 
 > No FreeBSD as interfaces seguem o driver: `em0`, `igb0`, `re0`, `wlan0`.
@@ -406,6 +442,92 @@ sudo ./build/NetworkTrafficAnalyzer eth0
 
 ---
 
+## AI Narrator (v6.0)
+
+Quando o ingestor recebe um evento com `kc_score >= NARRATOR_MIN_SCORE`, ele monta o JSON do incidente e pede pra um LLM gerar uma narrativa em PT-BR (o que aconteceu, por que é crítico, ação recomendada, MITRE). O texto vai pro InfluxDB como `incident_narrative` e aparece no painel "Narrativas IA" do dashboard.
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `NARRATOR_ENABLED` | `1` | `0` desliga o narrator (ingestor não chama LLM) |
+| `NARRATOR_BACKEND` | `ollama` | `ollama` (local) ou `groq` (cloud) |
+| `NARRATOR_MIN_SCORE` | `80` | Threshold de `kc_score` pra disparar narrativa |
+| `NARRATOR_TIMEOUT` | `20` | Timeout da chamada HTTP ao LLM (segundos) |
+| `OLLAMA_URL` | `http://localhost:11434` | Endpoint da API Ollama |
+| `OLLAMA_MODEL` | `llama3.2` | Modelo (precisa ter sido `ollama pull`-ado) |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Modelo Groq (quando `NARRATOR_BACKEND=groq`) |
+| `GROQ_API_KEY` | _(nenhum)_ | Lido também de `deploy/secrets/groq.env` |
+
+**Fluxo Ollama (default — sem custo, roda local):**
+```bash
+./scripts/up.sh --pull-llm    # primeira vez baixa o modelo (~2 GB)
+./scripts/up.sh               # próximas vezes
+```
+
+**Fluxo Groq (cloud, requer chave):**
+```bash
+cp deploy/secrets/groq.env.example deploy/secrets/groq.env
+$EDITOR deploy/secrets/groq.env       # cole sua GROQ_API_KEY
+export NARRATOR_BACKEND=groq
+./scripts/up.sh
+```
+
+---
+
+## Dashboard Generator (LLM local → Grafana API)
+
+`scripts/dash_gen.py` recebe uma descrição em PT-BR, monta um prompt com o
+schema do InfluxDB, chama o Ollama local e **publica o dashboard direto no
+Grafana via API** (`POST /api/dashboards/db`). Aparece imediatamente no UI,
+é editável via interface e persiste em `grafana_data` (sobrevive a restart).
+
+```bash
+# CLI direta — publica no Grafana
+./scripts/dash_gen.py --name top-threats \
+    --desc "top 10 IPs por kc_score nos últimos 30 min, mais um stat com total de incidentes críticos"
+
+# Via Makefile
+make dash NAME=dns-tunnel DESC="DNS tunneling: queries por minuto por src_ip"
+
+# Imprime e não envia (review antes)
+./scripts/dash_gen.py -n foo -d "..." --print --no-push
+
+# Publica E grava JSON pra versionar em git
+./scripts/dash_gen.py -n foo -d "..." --save-file
+
+# Modelo customizado (default: llama3.1:8b)
+./scripts/dash_gen.py -n bar -d "..." --model llama3.1:70b
+```
+
+A saída inclui o link direto: `http://localhost:3000/d/<uid>`.
+
+**Pré-requisitos:**
+- Stack de pé (`make up`) — Grafana e Ollama rodando
+- Modelo baixado: `make up-llm` ou `docker exec -it ollama ollama pull llama3.1:8b`
+
+**Variáveis de ambiente:**
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `OLLAMA_URL` | `http://localhost:11434` | Endpoint Ollama |
+| `DASH_GEN_MODEL` | `llama3.1:8b` | Modelo p/ geração (sobrescreve `OLLAMA_MODEL`) |
+| `DASH_GEN_TIMEOUT` | `120` | Timeout em segundos da chamada |
+| `GRAFANA_URL` | `http://localhost:3000` | Endpoint Grafana |
+| `GRAFANA_USER` | `admin` | Basic auth user |
+| `GRAFANA_PASS` | `admin` | Basic auth password |
+| `GRAFANA_API_KEY` | _(vazio)_ | Token de service account (alternativa a USER/PASS) |
+| `GRAFANA_FOLDER_UID` | _(vazio = General)_ | Pasta de destino |
+
+**Schema disponível p/ o LLM:**
+- `traffic` (tags: `agent_id`, `src_ip`, `protocol`, `attack_type`, `kill_chain_stage`, `mitre`; fields: `port`, `bytes`, `is_scan`, `kc_score`, `lat`, `lon`)
+- `pipeline_metrics` (tags: `agent_id`; fields: `rb_pkt_depth`, `rb_evt_depth`, `events_per_sec`, etc.)
+- `incident_narrative` (tags: `agent_id`, `src_ip`, `attack_type`, `backend`; fields: `narrative`, `kc_score`)
+
+Dashboards gerados levam tags `nta` + `ai-gen` e UID `nta-ai-<slug>` para
+diferenciar dos dashboards versionados manualmente. Re-rodar com mesmo
+`NAME` sobrescreve (overwrite=true).
+
+---
+
 ## Formato do Evento JSON publicado
 
 A partir da v5.0 o agente publica **lotes** (arrays) de eventos em uma única mensagem AMQP:
@@ -489,12 +611,13 @@ O workflow `.github/workflows/test-ids.yml` executa a cada push/PR:
 | v4.0 | IDS Engine avançado (EWMA + Kill Chain + MITRE) | ✅ |
 | v4.1 | PCAP Replay + Test Framework + CI/CD | ✅ |
 | v5.0 | Multi-Threading (pthreads + ring buffer lock-free + batch AMQP) | ✅ |
+| v5.5 | DX (install/quickstart/Makefile) + LLM Dashboard Generator | ✅ |
 | v5.1 | Validação Windows (Npcap + multi-thread) | Planejado |
-| v6.0 | Produção: VPS + Terraform + Nginx + Let's Encrypt | Planejado |
-| v7.0 | AI Narrator (LLM via Groq API em C) | Planejado |
-| v8.0 | nta-server em C + thread pool adaptativo + RabbitMQ cluster | Planejado |
-| v9.0 | Threat Intelligence (GeoIP + AbuseIPDB + IoC matching) | Planejado |
-| v10.0 | Alta Performance (AF_PACKET + TPACKET_V3 + zero-copy) | Planejado |
+| v6.0 | AI Narrator (LLM via Ollama/Groq) | ✅ Python · C planejado em v7.0 |
+| v7.0 | nta-server em C + thread pool adaptativo + RabbitMQ cluster | Esqueleto |
+| v8.0 | Threat Intelligence (GeoIP + AbuseIPDB + IoC matching) | Planejado |
+| v9.0 | Alta Performance (AF_PACKET + TPACKET_V3 + zero-copy) | Planejado |
+| v10.0 | Produção: VPS + Terraform + Nginx + Let's Encrypt (deploy final) | Planejado |
 
 ---
 

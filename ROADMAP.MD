@@ -3,10 +3,14 @@
 Evolução do projeto desde um sniffer básico até um **IDS comportamental com correlação de kill chain e narração por IA** — rodando em produção com infra provisionada via Terraform. **Stack 100% C** no caminho de dados (captura, análise, ingestão, narração).
 
 ```
-v1.0        v2.0          v3.0             v4.0              v5.0            v6.0             v7.0
-Captura → Mensageria → Agent/Server → IDS Engine → Multi-Thread → Prod + IaC → AI Narrator
-  ✅          ✅            ✅               ✅             ✅          PLANEJADO        PLANEJADO
+v1.0    v2.0      v3.0         v4.0       v5.0       v5.5         v6.0           v7.0           v8.0          v9.0       v10.0
+Captura→Mensageria→Agent/Server→IDS Engine→Multi-Thr→DX+LLM-Tools→AI Narrator(C)→nta-server→Threat Intel→Alta Perf→Prod + IaC
+  ✅      ✅         ✅            ✅         ✅         ✅           PARCIAL(Py)    PARCIAL       PLANEJADO    PLANEJADO  PLANEJADO
 ```
+
+> **Nota de ordem (revisão 2026-04):** o deploy em VPS foi movido para o **final** do roadmap (v10.0). Motivo: evitar pagar VPS + domínio durante o desenvolvimento das features (v6.0 → v9.0). A infra de produção entra só quando o stack estiver completo e estável localmente.
+>
+> **Nota de revisão 2026-05:** v6.0 implementado em **Python** (não em C como originalmente planejado). Decisão: priorizar tempo-de-feature; reescrita em C fica para v7.0 quando o `nta-server` for o único consumidor da fila. v5.5 inserida como camada de DX e ferramentas LLM auxiliares.
 
 ---
 
@@ -30,7 +34,7 @@ Captura → Mensageria → Agent/Server → IDS Engine → Multi-Thread → Prod
 * Detector de Port Scan (limiar: ≥15 portas únicas por IP)
 * Detector de ICMP Flood (limiar: ≥20 pacotes por IP)
 * Tabela de IPs suspeitos com garbage collection (timeout: 300s)
-* Ingestor Python: RabbitMQ → InfluxDB com enriquecimento GeoIP *(substituído pelo `nta-server` em C na v8.0)*
+* Ingestor Python: RabbitMQ → InfluxDB com enriquecimento GeoIP *(substituído pelo `nta-server` em C na v7.0)*
 * Schema InfluxDB com tags indexadas (`src_ip`, `protocol`)
 * Integração Grafana com datasource InfluxDB (Flux)
 
@@ -144,11 +148,44 @@ Captura → Mensageria → Agent/Server → IDS Engine → Multi-Thread → Prod
 
 ---
 
+### v5.5 — DX e LLM Tooling ✅
+
+> **Reduzir atrito de instalação e expandir uso do LLM além de narrativas.** Versão transversal: não introduz feature de detecção, mas elimina horas de setup manual e adiciona geração de dashboards via LLM local.
+
+**Onboarding unificado:**
+
+* `scripts/install.sh` — bootstrap idempotente. Detecta SO (apt/dnf/pacman/pkg/brew) e instala todo o stack (server + agente). Flags `--server-only`, `--agent-only`, `--no-build`. Aplica `setcap cap_net_raw` no binário automaticamente
+* `scripts/quickstart.sh` — orquestra `install` → `up` → `smoke-test`. Path zero-a-rodando em uma chamada
+* `scripts/up.sh --foreground` — consolida o antigo `server-up.sh` (que virou wrapper de back-compat). Default continua background
+* `Makefile` na raiz — atalhos: `install`, `quickstart`, `up`, `down`, `build`, `agent IFACE=`, `smoke`, `dash NAME= DESC=`, `clean`
+
+**LLM Dashboard Generator (`scripts/dash_gen.py`):**
+
+* CLI Python que recebe descrição em PT-BR e gera dashboard Grafana
+* Backend LLM: Ollama local (mesmo container do narrator) — modelo default `llama3.1:8b` (configurável via `DASH_GEN_MODEL`)
+* Prompt inclui schema do InfluxDB (measurements, tags, fields) — LLM nunca inventa nomes de campo
+* Validação estrutural: panels mínimos, queries Flux começam com `from(bucket:`, ids únicos, datasource UID correto
+* **Publicação via Grafana API** (`POST /api/dashboards/db`) — dashboard aparece no UI imediatamente, é editável e persiste em `grafana_data`
+* Auth: basic auth admin/admin (default) ou service account token (`GRAFANA_API_KEY`)
+* `--save-file` opcional para também versionar o JSON em `grafana/dashboards/`
+* Tags `nta` + `ai-gen` + UID `nta-ai-<slug>` para diferenciar de dashboards versionados manualmente
+* Reuso do `requests` já em `requirements.txt` — zero deps novas
+
+**Impacto:**
+
+* Setup do projeto: ~30 minutos (manual, multi-passo) → ~5 minutos (`make quickstart`)
+* Dashboards: criação manual no Grafana (10-30 min/dash) → `make dash NAME=foo DESC="..."` (~30s)
+* Cobertura multi-distro: testado mentalmente p/ Debian, Fedora, Arch, FreeBSD, macOS
+* Desbloqueia v10.0 (deploy VPS): bootstrap.sh do Terraform vai reusar `install.sh`
+
+---
+
 ## Próximas versões
 
-### v5.1 — Validação Windows
+### v5.1 — Validação Windows (pausada)
 
 > **Confirmar suporte multiplataforma com as novas features.**
+> Status: pausada por falta de máquina Windows física para teste — será retomada quando houver acesso a um host Windows.
 
 * Compilar v4+v5 com MinGW-w64 / Visual Studio no Windows
 * Validar captura via Npcap + análise multi-thread em ambiente real
@@ -158,65 +195,28 @@ Captura → Mensageria → Agent/Server → IDS Engine → Multi-Thread → Prod
 
 ---
 
-### v6.0 — Produção, IaC e Observabilidade
+### v6.0 — AI Narrator (LLM Integration)
 
-> **Infra de produção real.** O projeto sai do Docker Compose local para uma VPS acessível na internet, provisionada via Terraform, com HTTPS, domínio próprio e dashboards públicos.
+> **Status (2026-05):** **PARCIAL — implementado em Python**, não em C.
+>
+> O `src/ingestor/narrator.py` chama LLM (Ollama local OU Groq cloud) quando um incidente passa do `NARRATOR_MIN_SCORE` (default 80). A narrativa é gravada na measurement `incident_narrative` no InfluxDB e exibida no painel "Narrativas IA" do dashboard.
+>
+> **Decisão de arquitetura:** narrator em C foi adiado para v7.0 (junto com a reescrita do ingestor → `nta-server`). Razão: implementar em Python desbloqueou a feature em ~1 dia vs ~1 semana em C, e o fluxo continua válido — só o consumidor muda. As partes restantes do escopo original (roteamento inteligente entre 3 modelos, batch API, prompt caching) ficam para a versão C.
 
-**Stack de produção (budget: ~R$ 40/mês):**
+**Implementado:**
 
-| Componente | Serviço | Custo |
-|---|---|---|
-| VPS | Hetzner CX22 (2 vCPU, 4 GB, 40 GB SSD) | ~R$ 25/mês |
-| LLM API | Groq Developer (Llama 3.3 70B) | ~R$ 9/mês |
-| Domínio | `.dev` via Google Domains / Namecheap | ~R$ 5/mês |
-| DNS + CDN | Cloudflare (free tier) | R$ 0 |
-| CI/CD | GitHub Actions (free para OSS) | R$ 0 |
-| GeoIP | MaxMind GeoLite2 (free com registro) | R$ 0 |
-| Alertas | Telegram Bot API | R$ 0 |
-| Dashboard | Grafana (self-hosted na VPS) | R$ 0 |
+* Backend dual: Ollama (default, sem custo, roda local) ou Groq cloud
+* Threshold configurável (`NARRATOR_MIN_SCORE`)
+* Sistema prompt fixo em PT-BR no formato "INCIDENT | Severidade | O QUE ACONTECEU | POR QUÊ | AÇÃO | MITRE"
+* Carregamento automático de `GROQ_API_KEY` de `deploy/secrets/groq.env`
+* Métrica `incident_narrative` no InfluxDB com tags `agent_id`, `src_ip`, `attack_type`, `kill_chain_stage`, `backend`
+* Logs estruturados de chamadas LLM no ingestor (`📝 [NARRATIVE]`)
 
-**Terraform (Infrastructure-as-Code):**
-
-* `main.tf`: provisionamento da VPS Hetzner via provider `hcloud`
-* `dns.tf`: registros DNS no Cloudflare (subdomínios `grafana.*`, `rabbitmq.*`, `docs.*`)
-* `bootstrap.sh`: script de user-data que instala Docker, clona o repo, e sobe Docker Compose
-* `variables.tf`: tokens e configs parametrizadas (nunca hardcoded)
-* Documentação: `terraform plan` → `terraform apply` → sistema rodando em < 5 minutos
-
-**Nginx reverse proxy + TLS:**
-
-* Nginx na VPS como entry point único na porta 443
-* Subdomínios roteados para containers internos:
-  * `grafana.seuids.dev` → Grafana :3000
-  * `rabbitmq.seuids.dev` → RabbitMQ Management :15672
-  * `docs.seuids.dev` → Static docs site
-* Certificados TLS automáticos via Let's Encrypt + Certbot
-* Headers de segurança: HSTS, X-Content-Type-Options, X-Frame-Options
-
-**Dashboards Grafana otimizados para demo:**
-
-* Painel 1: "Live traffic" — gráfico de linha com pacotes/segundo em tempo real
-* Painel 2: "Threat map" — tabela de IPs suspeitos com GeoIP, tipo de ataque, score
-* Painel 3: "Kill chain timeline" — timeline visual de incidentes com estágios coloridos
-* Painel 4: "AI narrative" — texto do LLM narrator exibindo a última narrativa de incidente
-* Painel 5: "Detection score" — gauge mostrando taxa de detecção do IDS (alimentado pelo replay)
-* Viewer anônimo habilitado (entrevistadores acessam sem login)
-
-**Alertas em tempo real:**
-
-* Telegram: mensagem formatada com tipo de ataque, IP, score, e ação recomendada
-* Grafana alerting: thresholds configuráveis por tipo de detecção
-* Webhook genérico: integração futura com Slack/Discord/PagerDuty
-
----
-
-### v7.0 — AI Narrator (LLM Integration em C)
-
-> **O diferencial que nenhum IDS open-source tem.** Quando o kill chain correlator gera um incidente, uma LLM transforma o JSON técnico em uma narrativa em linguagem natural que explica o ataque, identifica a fase, e recomenda ações. **Implementado 100% em C via libcurl + cJSON.**
+**Restante (movido para v7.0 — narrator em C):**
 
 **Arquitetura do narrator:**
 
-* Thread dedicada no `nta-server`: a cada 5 minutos, busca incidentes pendentes (sem narrativa)
+* Thread dedicada no agente (ou no `nta-server` quando v7.0 for entregue): a cada N segundos busca incidentes pendentes (sem narrativa)
 * Para cada incidente, monta JSON de request com cJSON: system prompt + JSON do incidente + metadados GeoIP + baselines do IP
 * Chamada HTTP POST ao Groq API via libcurl: latência ~1-2s, throughput 394 tok/s
 * Parse da resposta com cJSON, narrativa extraída e gravada no InfluxDB via HTTP API (libcurl)
@@ -260,7 +260,11 @@ MITRE ATT&CK: T1557, T1046, T1110, T1071.004, T1498
 
 ---
 
-### v8.0 — Escalabilidade, Multi-Agente e Ingestão Elástica
+### v7.0 — Escalabilidade, Multi-Agente e Ingestão Elástica
+
+> **Status (2026-05):** **PARCIAL — esqueleto C presente, integração pendente.**
+>
+> Headers já criados: `nta_server.h`, `nta_consumer.h`, `nta_influx.h`, `nta_geoip.h`. Sources em `src/server/`. CMake já produz binário `nta-server` ligado a libcurl + libmaxminddb. Falta: thread pool adaptativo, integração com narrator (porta do Python para C), substituição do `data_ingestor.py` no `up.sh`, RabbitMQ cluster.
 
 > **Quando um único agente não é suficiente.** Preparar o sistema para operar com múltiplos agentes reportando para o mesmo servidor central, com capacidade de processamento que escala automaticamente.
 
@@ -333,7 +337,7 @@ Binário C que substitui o ingestor Python. Responsável por:
 
 ---
 
-### v9.0 — Threat Intelligence
+### v8.0 — Threat Intelligence
 
 > **Enriquecer eventos com contexto externo em C.** Transformar IPs em informação acionável.
 
@@ -345,7 +349,7 @@ Binário C que substitui o ingestor Python. Responsável por:
 
 ---
 
-### v10.0 — Alta Performance
+### v9.0 — Alta Performance
 
 > **Para redes de alta densidade.** Otimizações que só fazem sentido em links de 1 Gbps+.
 
@@ -354,6 +358,58 @@ Binário C que substitui o ingestor Python. Responsável por:
 * PF_RING como alternativa para NICs Intel com drivers compatíveis
 * NUMA-aware pinning: threads fixadas em CPUs do mesmo domínio NUMA que a NIC
 * Métricas de performance: packet loss rate, CPU por core, ring buffer utilization
+
+---
+
+### v10.0 — Produção, IaC e Observabilidade (deploy final)
+
+> **Infra de produção real — deixada por último.** Antes de pagar VPS + domínio, todas as features (v6.0 → v9.0) precisam estar prontas e estáveis localmente. Aqui o projeto sai do Docker Compose local para uma VPS acessível na internet, provisionada via Terraform, com HTTPS, domínio próprio e dashboards públicos.
+
+**Stack de produção (budget: ~R$ 40/mês):**
+
+| Componente | Serviço | Custo |
+|---|---|---|
+| VPS | Hetzner CX22 (2 vCPU, 4 GB, 40 GB SSD) | ~R$ 25/mês |
+| LLM API | Groq Developer (Llama 3.3 70B) | ~R$ 9/mês |
+| Domínio | `.dev` via Google Domains / Namecheap | ~R$ 5/mês |
+| DNS + CDN | Cloudflare (free tier) | R$ 0 |
+| CI/CD | GitHub Actions (free para OSS) | R$ 0 |
+| GeoIP | MaxMind GeoLite2 (free com registro) | R$ 0 |
+| Alertas | Telegram Bot API | R$ 0 |
+| Dashboard | Grafana (self-hosted na VPS) | R$ 0 |
+
+**Terraform (Infrastructure-as-Code):**
+
+* `main.tf`: provisionamento da VPS Hetzner via provider `hcloud`
+* `dns.tf`: registros DNS no Cloudflare (subdomínios `grafana.*`, `rabbitmq.*`, `docs.*`)
+* `bootstrap.sh`: script de user-data que instala Docker, clona o repo, e sobe Docker Compose
+* `variables.tf`: tokens e configs parametrizadas (nunca hardcoded)
+* Documentação: `terraform plan` → `terraform apply` → sistema rodando em < 5 minutos
+
+**Nginx reverse proxy + TLS:**
+
+* Nginx na VPS como entry point único na porta 443
+* Subdomínios roteados para containers internos:
+  * `grafana.seuids.dev` → Grafana :3000
+  * `rabbitmq.seuids.dev` → RabbitMQ Management :15672
+  * `docs.seuids.dev` → Static docs site
+* Certificados TLS automáticos via Let's Encrypt + Certbot
+* Headers de segurança: HSTS, X-Content-Type-Options, X-Frame-Options
+
+**Dashboards Grafana otimizados para demo:**
+
+* Painel 1: "Live traffic" — gráfico de linha com pacotes/segundo em tempo real
+* Painel 2: "Threat map" — tabela de IPs suspeitos com GeoIP, tipo de ataque, score
+* Painel 3: "Kill chain timeline" — timeline visual de incidentes com estágios coloridos
+* Painel 4: "AI narrative" — texto do LLM narrator exibindo a última narrativa de incidente
+* Painel 5: "Detection score" — gauge mostrando taxa de detecção do IDS (alimentado pelo replay)
+* Viewer anônimo habilitado (entrevistadores acessam sem login)
+
+**Alertas em tempo real:**
+
+* Telegram: mensagem formatada com tipo de ataque, IP, score, e ação recomendada
+* Grafana alerting: thresholds configuráveis por tipo de detecção
+* Webhook genérico: integração futura com Slack/Discord/PagerDuty
 
 ---
 
