@@ -1,0 +1,20 @@
+# Provisioning automático — Grafana lê este arquivo no boot e registra
+# o datasource InfluxDB sem intervenção manual.
+# Docs: https://grafana.com/docs/grafana/latest/administration/provisioning/#data-sources
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB
+    uid: influxdb-nta
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    isDefault: true
+    editable: true
+    jsonData:
+      version: Flux
+      organization: cybersecurity
+      defaultBucket: network_traffic
+      tlsSkipVerify: true
+    secureJsonData:
+      token: my-super-secret-auth-token

@@ -1,0 +1,13 @@
+# Roteamento: todo alerta cai no Telegram (única política por enquanto).
+# Docs: https://grafana.com/docs/grafana/latest/alerting/fundamentals/notification-policies/
+apiVersion: 1
+
+policies:
+  - orgId: 1
+    receiver: telegram-nta
+    group_by:
+      - alertname
+      - src_ip
+    group_wait: 10s
+    group_interval: 1m
+    repeat_interval: 30m

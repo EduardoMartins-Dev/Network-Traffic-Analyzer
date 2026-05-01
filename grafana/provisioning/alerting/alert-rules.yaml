@@ -1,0 +1,171 @@
+# Regras de alerta — avaliadas a cada 1m contra o InfluxDB.
+# Cada rule tem: 1 query (Flux) → reduce → threshold → fire.
+# Docs: https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/file-provisioning/#import-alert-rules
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: nta-ids
+    folder: NTA Alerts
+    interval: 1m
+    rules:
+      - uid: nta-attack-detected
+        title: Ataque detectado
+        condition: THRESHOLD
+        data:
+          - refId: QUERY
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: influxdb-nta
+            model:
+              refId: QUERY
+              query: |
+                from(bucket: "network_traffic")
+                  |> range(start: -5m)
+                  |> filter(fn: (r) => r._measurement == "traffic" and r._field == "is_scan" and r._value == 1.0)
+                  |> group(columns: ["src_ip", "attack_type"])
+                  |> count()
+          - refId: REDUCE
+            datasourceUid: __expr__
+            model:
+              refId: REDUCE
+              type: reduce
+              expression: QUERY
+              reducer: last
+              settings:
+                mode: replaceNN
+                replaceWithValue: 0
+          - refId: THRESHOLD
+            datasourceUid: __expr__
+            model:
+              refId: THRESHOLD
+              type: threshold
+              expression: REDUCE
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [REDUCE]
+                  reducer:
+                    type: last
+                    params: []
+        noDataState: OK
+        execErrState: Error
+        for: 1m
+        annotations:
+          summary: Um ou mais ataques foram detectados nos últimos 5 minutos.
+          description: O IDS classificou ao menos 1 evento como ataque (is_scan=1).
+        labels:
+          severity: warning
+
+      - uid: nta-killchain-critical
+        title: Kill chain crítica (score ≥ 85)
+        condition: THRESHOLD
+        data:
+          - refId: QUERY
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: influxdb-nta
+            model:
+              refId: QUERY
+              query: |
+                from(bucket: "network_traffic")
+                  |> range(start: -5m)
+                  |> filter(fn: (r) => r._measurement == "traffic" and r._field == "kc_score")
+                  |> group(columns: ["src_ip", "kill_chain_stage"])
+                  |> max()
+          - refId: REDUCE
+            datasourceUid: __expr__
+            model:
+              refId: REDUCE
+              type: reduce
+              expression: QUERY
+              reducer: last
+              settings:
+                mode: replaceNN
+                replaceWithValue: 0
+          - refId: THRESHOLD
+            datasourceUid: __expr__
+            model:
+              refId: THRESHOLD
+              type: threshold
+              expression: REDUCE
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [85]
+                  operator:
+                    type: and
+                  query:
+                    params: [REDUCE]
+                  reducer:
+                    type: last
+                    params: []
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: Progressão crítica na kill chain (score > 85).
+          description: O correlator avançou um IP para estágio avançado — possível exploit/exfil em andamento.
+        labels:
+          severity: critical
+
+      - uid: nta-pipeline-overflow
+        title: Pipeline — overflow do ring buffer
+        condition: THRESHOLD
+        data:
+          - refId: QUERY
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: influxdb-nta
+            model:
+              refId: QUERY
+              query: |
+                from(bucket: "network_traffic")
+                  |> range(start: -5m)
+                  |> filter(fn: (r) => r._measurement == "pipeline_metrics" and (r._field == "rb_pkt_overflow" or r._field == "rb_evt_overflow"))
+                  |> last()
+                  |> group()
+                  |> sum()
+                  |> keep(columns: ["_value"])
+          - refId: REDUCE
+            datasourceUid: __expr__
+            model:
+              refId: REDUCE
+              type: reduce
+              expression: QUERY
+              reducer: last
+              settings:
+                mode: replaceNN
+                replaceWithValue: 0
+          - refId: THRESHOLD
+            datasourceUid: __expr__
+            model:
+              refId: THRESHOLD
+              type: threshold
+              expression: REDUCE
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  query:
+                    params: [REDUCE]
+                  reducer:
+                    type: last
+                    params: []
+        noDataState: OK
+        execErrState: Error
+        for: 2m
+        annotations:
+          summary: Pacotes/eventos estão sendo descartados por buffer cheio.
+          description: Aumente AGENT_BUFFER_SIZE ou investigue gargalo na thread de análise/publicação.
+        labels:
+          severity: warning

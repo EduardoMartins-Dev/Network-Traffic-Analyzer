@@ -46,5 +46,22 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
     volumes:
       - ./grafana_data:/var/lib/grafana # Salva seus Dashboards e transformações
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro # Datasource + dashboard provider + alerting
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro # JSON dos dashboards versionados
+
+  # OLLAMA (LLM local — v6.0 AI Narrator)
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    container_name: ollama
+    restart: always
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama # cache de modelos (~2-4 GB por modelo)
+
+volumes:
+  ollama_data:
