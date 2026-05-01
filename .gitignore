@@ -13,3 +13,18 @@ traffic_log.txt
 /rabbitmq_data
 *.o
 *.a
+.env
+/deploy/agent/*.env
+/deploy/secrets/*
+!/deploy/secrets/*.example
+
+# GeoLite2 (binário proprietário da MaxMind — download manual, ver data/*.README.md)
+/data/*.mmdb
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor session backups
+*.save
