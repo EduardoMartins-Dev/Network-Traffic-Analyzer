@@ -62,4 +62,36 @@ add_custom_target(DataIngestor ALL
         COMMAND ${CMAKE_COMMAND} -E copy
         ${CMAKE_SOURCE_DIR}/src/ingestor/data_ingestor.py
         ${CMAKE_BINARY_DIR}/data_ingestor.py
+        COMMAND ${CMAKE_COMMAND} -E copy
+        ${CMAKE_SOURCE_DIR}/src/ingestor/narrator.py
+        ${CMAKE_BINARY_DIR}/narrator.py
 )
+
+# --- SERVIDOR: nta-server em C (v7.0 — substitui o data_ingestor.py) ---
+# Dependências: librabbitmq (já presente), libcurl, libmaxminddb.
+# Fedora/Toolbx: dnf install libcurl-devel libmaxminddb-devel
+if(NOT WIN32)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBCURL REQUIRED libcurl)
+    pkg_check_modules(LIBMAXMINDDB REQUIRED libmaxminddb)
+
+    add_executable(nta-server
+            src/server/nta_server.c
+            src/server/nta_consumer.c
+            src/server/nta_influx.c
+            src/server/nta_geoip.c
+            src/output/cJSON.c
+    )
+
+    target_include_directories(nta-server PRIVATE
+            ${LIBCURL_INCLUDE_DIRS}
+            ${LIBMAXMINDDB_INCLUDE_DIRS}
+    )
+
+    target_link_libraries(nta-server PRIVATE
+            rabbitmq
+            ${LIBCURL_LIBRARIES}
+            ${LIBMAXMINDDB_LIBRARIES}
+            Threads::Threads
+    )
+endif()
