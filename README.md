@@ -1,16 +1,20 @@
 # Network Traffic Analyzer
 
 ![Status](https://img.shields.io/badge/Status-Development-orange?style=for-the-badge)
-![Version](https://img.shields.io/badge/Version-5.0-blueviolet?style=for-the-badge)
+![Version](https://img.shields.io/badge/Version-7.0--rc-blueviolet?style=for-the-badge)
 ![Language](https://img.shields.io/badge/Language-C11-blue?style=for-the-badge&logo=c&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-lightgrey?style=for-the-badge)
 ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-Messaging-FF6600?style=for-the-badge&logo=rabbitmq&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Infrastructure-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
+> **Versão atual: v7.0-rc** — nta-server em C, narrator C (Groq), pool adaptativo de workers via RabbitMQ Mgmt API. Faltam retention InfluxDB e mTLS multi-agente para fechar v7.0.
+
 O **Network Traffic Analyzer** é um sistema de monitoramento e detecção de intrusão (IDS) de alta performance desenvolvido em C (C11), com arquitetura inspirada no modelo **Agent/Server do Zabbix**.
 
 Cada agente roda em um host monitorado, captura pacotes via libpcap/Npcap, detecta ataques comportamentalmente com **baseline EWMA adaptativo** e **kill chain correlator**, e envia os eventos enriquecidos com tags MITRE ATT&CK para um servidor central via AMQP.
+
+A v7.0 substitui o ingestor Python por um servidor em C (`nta-server`) com pool de workers adaptativo (auto-scale via Mgmt API), narrativa LLM em C (libcurl→Groq) e métricas próprias (`nta_pool`, `incident_narrative`).
 
 ---
 
@@ -603,7 +607,7 @@ O workflow `.github/workflows/test-ids.yml` executa a cada push/PR:
 | v5.5 | DX (install/quickstart/Makefile) + LLM Dashboard Generator | ✅ |
 | v5.1 | Validação Windows (Npcap + multi-thread) | Planejado |
 | v6.0 | AI Narrator (LLM via Groq) | ✅ migrado para C em v7.0 |
-| v7.0 | nta-server em C + thread pool adaptativo + RabbitMQ cluster | ✅ Parcial (server+republish+metrics+narrator C+scaler dinâmico; falta retention+mTLS) |
+| v7.0-rc | nta-server em C + narrator C (Groq) + pool adaptativo (Mgmt API) | 🚧 RC — falta retention/downsampling InfluxDB + mTLS multi-agente · cluster RabbitMQ deferido p/ v10.0 |
 | v8.0 | Threat Intelligence (GeoIP + AbuseIPDB + IoC matching) | Planejado |
 | v9.0 | Alta Performance (AF_PACKET + TPACKET_V3 + zero-copy) | Planejado |
 | v10.0 | Produção: VPS + Terraform + Nginx + Let's Encrypt (deploy final) | Planejado |
