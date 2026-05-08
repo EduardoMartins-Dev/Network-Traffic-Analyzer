@@ -188,7 +188,6 @@ make install                # só instala deps + builda (não sobe nada)
 make install-server         # só dependências do servidor
 make install-agent          # só dependências/build do agente
 make up                     # sobe stack (background)
-make up-llm                 # idem + baixa modelo Ollama (~2 GB)
 make down                   # derruba tudo
 make help                   # lista todos os targets
 ```
@@ -202,7 +201,7 @@ Fedora/RHEL/CentOS (dnf), Arch (pacman), FreeBSD (pkg) e macOS (brew).
 
 Dois papéis, tipicamente em máquinas separadas:
 
-- **Servidor Central** — agrega eventos de múltiplos agentes (RabbitMQ + InfluxDB + Grafana + Ollama + ingestor Python).
+- **Servidor Central** — agrega eventos de múltiplos agentes (RabbitMQ + InfluxDB + Grafana + nta-server em C + narrator Python via Groq).
 - **Agente Sensor** — captura tráfego local e publica no servidor (binário C).
 
 As dependências não se sobrepõem: servidor não precisa de `libpcap` nem
@@ -236,10 +235,9 @@ sudo dnf install moby-engine docker-compose python3 python3-pip
 #### Subir o stack
 
 ```bash
-./scripts/up.sh                 # ingestor em background (default)
-./scripts/up.sh --foreground    # ingestor em foreground (Ctrl+C para parar)
+./scripts/up.sh                 # nta-server em background (default)
+./scripts/up.sh --foreground    # nta-server em foreground (Ctrl+C para parar)
 ./scripts/up.sh --no-ingest     # só infra docker
-./scripts/up.sh --pull-llm      # idem + baixa modelo Ollama
 ```
 
 Manual (sem scripts):
@@ -247,7 +245,8 @@ Manual (sem scripts):
 docker compose up -d
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cd build && python3 data_ingestor.py
+./build/nta-server &
+python3 src/ingestor/narrator.py &
 ```
 
 Acesso:
@@ -444,39 +443,29 @@ sudo ./build/NetworkTrafficAnalyzer eth0
 
 ## AI Narrator (v6.0)
 
-Quando o ingestor recebe um evento com `kc_score >= NARRATOR_MIN_SCORE`, ele monta o JSON do incidente e pede pra um LLM gerar uma narrativa em PT-BR (o que aconteceu, por que é crítico, ação recomendada, MITRE). O texto vai pro InfluxDB como `incident_narrative` e aparece no painel "Narrativas IA" do dashboard.
+Quando o `nta-server` recebe um evento com `kc_score >= NARRATOR_MIN_SCORE`, ele republica o evento em `narrator_queue`. O consumer `narrator.py` (standalone) monta o prompt e chama a Groq Cloud API pra gerar narrativa em PT-BR (o que aconteceu, por que é crítico, ação recomendada, MITRE). O texto vai pro InfluxDB como `incident_narrative` e aparece no painel "Narrativas IA" do dashboard.
 
 | Variável | Default | Descrição |
 |---|---|---|
-| `NARRATOR_ENABLED` | `1` | `0` desliga o narrator (ingestor não chama LLM) |
-| `NARRATOR_BACKEND` | `ollama` | `ollama` (local) ou `groq` (cloud) |
+| `NARRATOR_ENABLED` | `1` | `0` desliga o narrator |
 | `NARRATOR_MIN_SCORE` | `80` | Threshold de `kc_score` pra disparar narrativa |
-| `NARRATOR_TIMEOUT` | `20` | Timeout da chamada HTTP ao LLM (segundos) |
-| `OLLAMA_URL` | `http://localhost:11434` | Endpoint da API Ollama |
-| `OLLAMA_MODEL` | `llama3.2` | Modelo (precisa ter sido `ollama pull`-ado) |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Modelo Groq (quando `NARRATOR_BACKEND=groq`) |
+| `NARRATOR_TIMEOUT` | `8` | Timeout da chamada HTTP ao Groq (segundos) |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Modelo Groq |
 | `GROQ_API_KEY` | _(nenhum)_ | Lido também de `deploy/secrets/groq.env` |
 
-**Fluxo Ollama (default — sem custo, roda local):**
-```bash
-./scripts/up.sh --pull-llm    # primeira vez baixa o modelo (~2 GB)
-./scripts/up.sh               # próximas vezes
-```
-
-**Fluxo Groq (cloud, requer chave):**
+**Setup:**
 ```bash
 cp deploy/secrets/groq.env.example deploy/secrets/groq.env
 $EDITOR deploy/secrets/groq.env       # cole sua GROQ_API_KEY
-export NARRATOR_BACKEND=groq
 ./scripts/up.sh
 ```
 
 ---
 
-## Dashboard Generator (LLM local → Grafana API)
+## Dashboard Generator (Groq → Grafana API)
 
 `scripts/dash_gen.py` recebe uma descrição em PT-BR, monta um prompt com o
-schema do InfluxDB, chama o Ollama local e **publica o dashboard direto no
+schema do InfluxDB, chama a Groq Cloud API e **publica o dashboard direto no
 Grafana via API** (`POST /api/dashboards/db`). Aparece imediatamente no UI,
 é editável via interface e persiste em `grafana_data` (sobrevive a restart).
 
@@ -494,22 +483,22 @@ make dash NAME=dns-tunnel DESC="DNS tunneling: queries por minuto por src_ip"
 # Publica E grava JSON pra versionar em git
 ./scripts/dash_gen.py -n foo -d "..." --save-file
 
-# Modelo customizado (default: llama3.1:8b)
-./scripts/dash_gen.py -n bar -d "..." --model llama3.1:70b
+# Modelo customizado (default: llama-3.3-70b-versatile)
+./scripts/dash_gen.py -n bar -d "..." --model llama-3.1-8b-instant
 ```
 
 A saída inclui o link direto: `http://localhost:3000/d/<uid>`.
 
 **Pré-requisitos:**
-- Stack de pé (`make up`) — Grafana e Ollama rodando
-- Modelo baixado: `make up-llm` ou `docker exec -it ollama ollama pull llama3.1:8b`
+- Stack de pé (`make up`) — Grafana rodando
+- `GROQ_API_KEY` em `deploy/secrets/groq.env` (mesmo arquivo do narrator)
 
 **Variáveis de ambiente:**
 
 | Variável | Default | Descrição |
 |---|---|---|
-| `OLLAMA_URL` | `http://localhost:11434` | Endpoint Ollama |
-| `DASH_GEN_MODEL` | `llama3.1:8b` | Modelo p/ geração (sobrescreve `OLLAMA_MODEL`) |
+| `GROQ_API_KEY` | _(nenhum)_ | Lido também de `deploy/secrets/groq.env` |
+| `DASH_GEN_MODEL` | `llama-3.3-70b-versatile` | Modelo p/ geração |
 | `DASH_GEN_TIMEOUT` | `120` | Timeout em segundos da chamada |
 | `GRAFANA_URL` | `http://localhost:3000` | Endpoint Grafana |
 | `GRAFANA_USER` | `admin` | Basic auth user |
@@ -613,8 +602,8 @@ O workflow `.github/workflows/test-ids.yml` executa a cada push/PR:
 | v5.0 | Multi-Threading (pthreads + ring buffer lock-free + batch AMQP) | ✅ |
 | v5.5 | DX (install/quickstart/Makefile) + LLM Dashboard Generator | ✅ |
 | v5.1 | Validação Windows (Npcap + multi-thread) | Planejado |
-| v6.0 | AI Narrator (LLM via Ollama/Groq) | ✅ Python · C planejado em v7.0 |
-| v7.0 | nta-server em C + thread pool adaptativo + RabbitMQ cluster | Esqueleto |
+| v6.0 | AI Narrator (LLM via Groq) | ✅ migrado para C em v7.0 |
+| v7.0 | nta-server em C + thread pool adaptativo + RabbitMQ cluster | ✅ Parcial (server+republish+metrics+narrator C+scaler dinâmico; falta retention+mTLS) |
 | v8.0 | Threat Intelligence (GeoIP + AbuseIPDB + IoC matching) | Planejado |
 | v9.0 | Alta Performance (AF_PACKET + TPACKET_V3 + zero-copy) | Planejado |
 | v10.0 | Produção: VPS + Terraform + Nginx + Let's Encrypt (deploy final) | Planejado |

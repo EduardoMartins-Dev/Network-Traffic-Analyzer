@@ -29,6 +29,31 @@ int  nta_influx_write_traffic(NtaInflux *inf, NtaGeo *geo,
                               const char *body, size_t len,
                               const char *agent_id);
 
+/* Parse JSON (objeto único) em `body` e escreve como measurement
+ * "pipeline_metrics". Cada chave numérica vira um field. `agent_id` vira tag.
+ * Mantém paridade com data_ingestor.py._on_metrics. Retorna 0 em sucesso. */
+int  nta_influx_write_metrics(NtaInflux *inf,
+                              const char *body, size_t len,
+                              const char *agent_id);
+
+/* Grava measurement "incident_narrative" pra narrativa LLM.
+ * tags  : agent_id, src_ip, attack_type, kill_chain_stage, backend
+ * fields: narrative (string), kc_score (float)
+ * `event_json` é o JSON do evento original (extrai tags). `narrative` já é
+ * a string final retornada pelo modelo. Retorna 0 em sucesso. */
+int  nta_influx_write_narrative(NtaInflux *inf,
+                                const char *event_json, size_t event_len,
+                                const char *narrative,
+                                const char *agent_id,
+                                const char *backend);
+
+/* Grava measurement "nta_pool" (status do pool de traffic workers).
+ * fields: pool_size, backlog, unacked, consumers (todos int).
+ * Sem tags — métrica global do server. Retorna 0 sucesso. */
+int  nta_influx_write_pool(NtaInflux *inf,
+                           int pool_size, int backlog,
+                           int unacked, int consumers);
+
 void nta_influx_close(NtaInflux *inf);
 
 #endif /* NTA_INFLUX_H */

@@ -113,7 +113,7 @@ class SOCIngestor:
 
     # --------------------------------------------------------------------------
     # Narrativa LLM pra incidentes de score alto (kc_score >= NARRATOR_MIN_SCORE)
-    # Chamada síncrona — Ollama/Groq devem responder em < NARRATOR_TIMEOUT
+    # Chamada síncrona — Groq deve responder em < NARRATOR_TIMEOUT
     # --------------------------------------------------------------------------
     def _narrate(self, data: dict, agent_id: str) -> None:
         text = narrator.narrate(data, agent_id)

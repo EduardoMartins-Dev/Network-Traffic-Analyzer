@@ -175,8 +175,7 @@ cat <<EOF
 $(ok "instalação concluída.")
 
 Próximos passos:
-  ./scripts/up.sh                   # sobe stack (RabbitMQ + Influx + Grafana + Ollama)
-  ./scripts/up.sh --pull-llm        # idem + baixa modelo do Ollama (~2 GB)
+  ./scripts/up.sh                   # sobe stack (RabbitMQ + Influx + Grafana)
   sudo ./build/NetworkTrafficAnalyzer <iface>   # roda o agente
 
 Atalho geral:

@@ -41,27 +41,32 @@ services:
     restart: always
     ports:
       - "3000:3000"
-    depends_on:
-      - influxdb
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_RENDERING_SERVER_URL=http://gf-renderer:8081/render
+      - GF_RENDERING_CALLBACK_URL=http://grafana:3000/
+      - GF_RENDERING_RENDERER_TOKEN=${GF_RENDERER_TOKEN:-nta-render-token-change-me}
+      - GF_RENDERING_RENDERER_REQUEST_TIMEOUT=120s
+      - GF_RENDERING_TIMEOUT=120
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+    depends_on:
+      - influxdb
+      - gf-renderer
     volumes:
       - ./grafana_data:/var/lib/grafana # Salva seus Dashboards e transformações
       - ./grafana/provisioning:/etc/grafana/provisioning:ro # Datasource + dashboard provider + alerting
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro # JSON dos dashboards versionados
 
-  # OLLAMA (LLM local — v6.0 AI Narrator)
-  ollama:
-    image: docker.io/ollama/ollama:latest
-    container_name: ollama
+  # GRAFANA IMAGE RENDERER (chromium headless — gera PNGs via /render/*)
+  gf-renderer:
+    image: docker.io/grafana/grafana-image-renderer:latest
+    container_name: gf-renderer
     restart: always
     ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama # cache de modelos (~2-4 GB por modelo)
+      - "8081:8081"
+    environment:
+      - ENABLE_METRICS=true
+      - AUTH_TOKEN=${GF_RENDERER_TOKEN:-nta-render-token-change-me}
 
-volumes:
-  ollama_data:

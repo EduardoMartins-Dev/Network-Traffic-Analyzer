@@ -297,6 +297,183 @@ int nta_influx_write_traffic(NtaInflux *inf, NtaGeo *geo,
 }
 
 /* -------------------------------------------------------------------------- *
+ * Write metrics — measurement "pipeline_metrics".                           *
+ * Schema espelha data_ingestor.py._on_metrics:                              *
+ *   tags  : agent_id                                                         *
+ *   fields: cada chave numérica do JSON (rb_pkt_depth, eps, etc) como float *
+ * -------------------------------------------------------------------------- */
+int nta_influx_write_metrics(NtaInflux *inf, const char *body, size_t len,
+                             const char *agent_id) {
+    if (!inf->ready || !body || len == 0) return -1;
+
+    cJSON *root = cJSON_ParseWithLength(body, len);
+    if (!cJSON_IsObject(root)) {
+        if (root) cJSON_Delete(root);
+        fprintf(stderr, "[METRICS] payload não é objeto JSON\n");
+        return -1;
+    }
+
+    char esc_agent[MAX_TAG_LEN];
+    lp_escape(esc_agent, sizeof(esc_agent), agent_id ? agent_id : "unknown");
+
+    char lp[LP_BUF_SIZE];
+    int n = snprintf(lp, sizeof(lp), "pipeline_metrics,agent_id=%s ", esc_agent);
+    if (n <= 0 || (size_t)n >= sizeof(lp)) {
+        cJSON_Delete(root);
+        return -1;
+    }
+    size_t w = (size_t)n;
+
+    int field_count = 0;
+    char esc_key[MAX_TAG_LEN];
+    cJSON *iter = NULL;
+    cJSON_ArrayForEach(iter, root) {
+        if (!cJSON_IsNumber(iter) || !iter->string) continue;
+        lp_escape(esc_key, sizeof(esc_key), iter->string);
+        n = snprintf(lp + w, sizeof(lp) - w, "%s%s=%.6g",
+                     field_count == 0 ? "" : ",", esc_key, iter->valuedouble);
+        if (n <= 0 || (size_t)n >= sizeof(lp) - w) break;
+        w += (size_t)n;
+        field_count++;
+    }
+    cJSON_Delete(root);
+
+    if (field_count == 0) return 0;  /* nada numérico — não é erro */
+
+    n = snprintf(lp + w, sizeof(lp) - w, "\n");
+    if (n <= 0 || (size_t)n >= sizeof(lp) - w) return -1;
+    w += (size_t)n;
+
+    int rc = influx_post(inf, lp, w);
+    if (rc == 0) {
+        fprintf(stderr, "[INFLUX] metrics: %d field(s) / %zuB OK\n",
+                field_count, w);
+    }
+    return rc;
+}
+
+/* -------------------------------------------------------------------------- *
+ * Write narrative — measurement "incident_narrative".                        *
+ * Schema espelha narrator.py._on_message:                                    *
+ *   tags  : agent_id, src_ip, attack_type, kill_chain_stage, backend         *
+ *   fields: narrative (string), kc_score (float)                             *
+ * String fields no line protocol vão entre aspas com escape de '\\' e '"'.   *
+ * -------------------------------------------------------------------------- */
+static size_t lp_escape_str_field(char *out, size_t cap, const char *in) {
+    if (!out || cap == 0) return 0;
+    if (!in) { out[0] = '\0'; return 0; }
+    size_t w = 0;
+    for (const char *p = in; *p && w + 2 < cap; p++) {
+        if (*p == '\\' || *p == '"') {
+            out[w++] = '\\';
+            if (w + 1 >= cap) break;
+        }
+        if (*p == '\n') {
+            out[w++] = '\\';
+            if (w + 1 >= cap) break;
+            out[w++] = 'n';
+            continue;
+        }
+        if (*p == '\r') continue;
+        out[w++] = *p;
+    }
+    out[w] = '\0';
+    return w;
+}
+
+int nta_influx_write_narrative(NtaInflux *inf,
+                               const char *event_json, size_t event_len,
+                               const char *narrative,
+                               const char *agent_id,
+                               const char *backend) {
+    if (!inf->ready || !narrative || !*narrative) return -1;
+
+    cJSON *root = NULL;
+    if (event_json && event_len > 0) {
+        root = cJSON_ParseWithLength(event_json, event_len);
+    }
+
+    const char *src_ip = "0.0.0.0";
+    const char *attack = "UNKNOWN";
+    const char *stage  = "UNKNOWN";
+    double kc_score = 0;
+
+    if (cJSON_IsObject(root)) {
+        const cJSON *v;
+        v = cJSON_GetObjectItemCaseSensitive(root, "src_ip");
+        if (cJSON_IsString(v) && v->valuestring) src_ip = v->valuestring;
+        v = cJSON_GetObjectItemCaseSensitive(root, "attack_type");
+        if (cJSON_IsString(v) && v->valuestring) attack = v->valuestring;
+        v = cJSON_GetObjectItemCaseSensitive(root, "kill_chain_stage");
+        if (cJSON_IsString(v) && v->valuestring) stage = v->valuestring;
+        v = cJSON_GetObjectItemCaseSensitive(root, "kc_score");
+        if (cJSON_IsNumber(v)) kc_score = v->valuedouble;
+    }
+
+    /* Copia tags pra buffers locais — `src_ip`/`attack`/`stage` apontam pra
+     * cJSON que vai ser destruído logo após. */
+    char src_ip_buf[MAX_TAG_LEN], attack_buf[MAX_TAG_LEN], stage_buf[MAX_TAG_LEN];
+    snprintf(src_ip_buf, sizeof(src_ip_buf), "%s", src_ip);
+    snprintf(attack_buf, sizeof(attack_buf), "%s", attack);
+    snprintf(stage_buf,  sizeof(stage_buf),  "%s", stage);
+
+    char esc_agent[MAX_TAG_LEN], esc_ip[MAX_TAG_LEN], esc_attack[MAX_TAG_LEN];
+    char esc_stage[MAX_TAG_LEN], esc_backend[MAX_TAG_LEN];
+    lp_escape(esc_agent,   sizeof(esc_agent),   agent_id ? agent_id : "unknown");
+    lp_escape(esc_ip,      sizeof(esc_ip),      src_ip_buf);
+    lp_escape(esc_attack,  sizeof(esc_attack),  attack_buf);
+    lp_escape(esc_stage,   sizeof(esc_stage),   stage_buf);
+    lp_escape(esc_backend, sizeof(esc_backend), backend ? backend : "unknown");
+
+    /* Campo string narrative pode ser longo (~1KB). Aloca buffer dinâmico. */
+    size_t narr_cap = strlen(narrative) * 2 + 16;
+    char *esc_narr = malloc(narr_cap);
+    if (!esc_narr) { if (root) cJSON_Delete(root); return -1; }
+    lp_escape_str_field(esc_narr, narr_cap, narrative);
+
+    size_t lp_cap = narr_cap + 1024;
+    char *lp = malloc(lp_cap);
+    if (!lp) { free(esc_narr); if (root) cJSON_Delete(root); return -1; }
+
+    int n = snprintf(lp, lp_cap,
+        "incident_narrative,agent_id=%s,src_ip=%s,attack_type=%s,"
+        "kill_chain_stage=%s,backend=%s narrative=\"%s\",kc_score=%.6g\n",
+        esc_agent, esc_ip, esc_attack, esc_stage, esc_backend,
+        esc_narr, kc_score);
+
+    free(esc_narr);
+    if (root) cJSON_Delete(root);
+
+    if (n <= 0 || (size_t)n >= lp_cap) {
+        free(lp);
+        return -1;
+    }
+
+    int rc = influx_post(inf, lp, (size_t)n);
+    if (rc == 0) {
+        fprintf(stderr, "[NARR] write %s | %s | %d chars\n",
+                src_ip_buf, attack_buf, (int)strlen(narrative));
+    }
+    free(lp);
+    return rc;
+}
+
+/* -------------------------------------------------------------------------- *
+ * Write pool status — measurement "nta_pool".                               *
+ * -------------------------------------------------------------------------- */
+int nta_influx_write_pool(NtaInflux *inf,
+                          int pool_size, int backlog,
+                          int unacked, int consumers) {
+    if (!inf->ready) return -1;
+    char lp[256];
+    int n = snprintf(lp, sizeof(lp),
+        "nta_pool pool_size=%di,backlog=%di,unacked=%di,consumers=%di\n",
+        pool_size, backlog, unacked, consumers);
+    if (n <= 0 || (size_t)n >= sizeof(lp)) return -1;
+    return influx_post(inf, lp, (size_t)n);
+}
+
+/* -------------------------------------------------------------------------- *
  * Close                                                                      *
  * -------------------------------------------------------------------------- */
 void nta_influx_close(NtaInflux *inf) {

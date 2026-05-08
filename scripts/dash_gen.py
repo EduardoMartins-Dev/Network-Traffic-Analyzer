@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""dash_gen.py — gerador de dashboards Grafana via LLM local (Ollama).
+"""dash_gen.py — gerador de dashboards Grafana via Groq Cloud.
 
 Recebe descrição em linguagem natural, monta prompt com schema do InfluxDB,
-chama Ollama, e empurra o dashboard para o Grafana via API
+chama a Groq API, e empurra o dashboard para o Grafana via API
 (POST /api/dashboards/db). O dashboard aparece imediatamente no Grafana e é
 editável via UI — sobrevive a restarts pois é persistido em grafana_data.
 
 Uso:
   ./scripts/dash_gen.py --name top-threats --desc "top 10 IPs por kc_score nos últimos 30 min"
-  ./scripts/dash_gen.py -n dns-tunnel -d "DNS tunneling: queries/min por src_ip" --model llama3.1:8b
+  ./scripts/dash_gen.py -n dns-tunnel -d "DNS tunneling: queries/min por src_ip" --model llama-3.1-8b-instant
   ./scripts/dash_gen.py -n foo -d "..." --print          # imprime e não envia
   ./scripts/dash_gen.py -n foo -d "..." --save-file      # também grava em grafana/dashboards/
 
 Variáveis de ambiente:
-  OLLAMA_URL          http://localhost:11434
-  DASH_GEN_MODEL      llama3.1:8b
+  GROQ_API_KEY        (lido também de deploy/secrets/groq.env)
+  DASH_GEN_MODEL      llama-3.3-70b-versatile
   DASH_GEN_TIMEOUT    120
   GRAFANA_URL         http://localhost:3000
   GRAFANA_USER        admin
@@ -34,8 +34,19 @@ import requests
 ROOT = Path(__file__).resolve().parent.parent
 DASH_DIR = ROOT / "grafana" / "dashboards"
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
-OLLAMA_MODEL = os.getenv("DASH_GEN_MODEL", os.getenv("OLLAMA_MODEL", "llama3.1:8b"))
+# Carrega GROQ_API_KEY de deploy/secrets/groq.env se ainda não estiver no env.
+_GROQ_ENV = ROOT / "deploy" / "secrets" / "groq.env"
+if not os.getenv("GROQ_API_KEY") and _GROQ_ENV.is_file():
+    for _line in _GROQ_ENV.read_text().splitlines():
+        _line = _line.strip()
+        if not _line or _line.startswith("#") or "=" not in _line:
+            continue
+        _k, _v = _line.split("=", 1)
+        os.environ.setdefault(_k, _v)
+
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL = os.getenv("DASH_GEN_MODEL", "llama-3.3-70b-versatile")
 TIMEOUT = float(os.getenv("DASH_GEN_TIMEOUT", "120"))
 
 GRAFANA_URL = os.getenv("GRAFANA_URL", "http://localhost:3000").rstrip("/")
@@ -120,14 +131,19 @@ def build_user_prompt(desc: str, name: str) -> str:
     )
 
 
-def call_ollama(system: str, user: str, model: str) -> str:
+def call_groq(system: str, user: str, model: str) -> str:
+    if not GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY ausente — popule deploy/secrets/groq.env")
     resp = requests.post(
-        f"{OLLAMA_URL}/api/chat",
+        GROQ_URL,
+        headers={
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json",
+        },
         json={
             "model": model,
-            "stream": False,
-            "format": "json",
-            "options": {"temperature": 0.2},
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -136,7 +152,7 @@ def call_ollama(system: str, user: str, model: str) -> str:
         timeout=TIMEOUT,
     )
     resp.raise_for_status()
-    return resp.json()["message"]["content"].strip()
+    return resp.json()["choices"][0]["message"]["content"].strip()
 
 
 def extract_json(text: str) -> dict:
@@ -229,7 +245,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-n", "--name", required=True, help="slug do dashboard (vira o título e UID)")
     ap.add_argument("-d", "--desc", required=True, help="descrição em linguagem natural")
-    ap.add_argument("--model", default=OLLAMA_MODEL, help=f"modelo Ollama (default: {OLLAMA_MODEL})")
+    ap.add_argument("--model", default=GROQ_MODEL, help=f"modelo Groq (default: {GROQ_MODEL})")
     ap.add_argument("--print", action="store_true", help="imprime o JSON em stdout em vez de enviar")
     ap.add_argument("--save-file", action="store_true", help="também grava em grafana/dashboards/<slug>.json (versionável)")
     ap.add_argument("--no-push", action="store_true", help="não envia para o Grafana (combina com --save-file ou --print)")
@@ -240,12 +256,12 @@ def main() -> int:
         print("✗ --name inválido (precisa ter chars alfanuméricos).", file=sys.stderr)
         return 2
 
-    print(f"▶ chamando Ollama em {OLLAMA_URL} (model={args.model}, timeout={TIMEOUT}s)...", file=sys.stderr)
+    print(f"▶ chamando Groq (model={args.model}, timeout={TIMEOUT}s)...", file=sys.stderr)
     try:
-        raw = call_ollama(SYSTEM_PROMPT, build_user_prompt(args.desc, slug), args.model)
-    except requests.exceptions.RequestException as e:
-        print(f"✗ Ollama falhou: {e}", file=sys.stderr)
-        print(f"  Garanta que o stack está de pé: ./scripts/up.sh --pull-llm", file=sys.stderr)
+        raw = call_groq(SYSTEM_PROMPT, build_user_prompt(args.desc, slug), args.model)
+    except (requests.exceptions.RequestException, RuntimeError) as e:
+        print(f"✗ Groq falhou: {e}", file=sys.stderr)
+        print(f"  Garanta que GROQ_API_KEY está em deploy/secrets/groq.env", file=sys.stderr)
         return 1
 
     try:

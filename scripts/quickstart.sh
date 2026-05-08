@@ -7,7 +7,6 @@
 #
 # Flags repassadas:
 #   --no-smoke           pula etapa 3
-#   --pull-llm           passa para up.sh (baixa modelo Ollama)
 #   --server-only        só servidor (passado para install.sh)
 #   --agent-only         só agente (passado para install.sh)
 
@@ -21,7 +20,6 @@ UP_FLAGS=()
 for arg in "$@"; do
     case "$arg" in
         --no-smoke)            DO_SMOKE=0 ;;
-        --pull-llm)            UP_FLAGS+=("--pull-llm") ;;
         --server-only)         INSTALL_FLAGS+=("--server-only") ;;
         --agent-only)          INSTALL_FLAGS+=("--agent-only"); DO_SMOKE=0 ;;
         -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;

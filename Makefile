@@ -1,7 +1,7 @@
 # Network Traffic Analyzer — atalhos de uso comum.
 # Cada target chama o script correspondente em scripts/.
 
-.PHONY: help install quickstart up up-fg down build agent test smoke clean dash
+.PHONY: help install quickstart up up-fg down build agent test smoke clean dash install-server install-agent
 
 help:
 	@echo "Network Traffic Analyzer — targets:"
@@ -13,12 +13,11 @@ help:
 	@echo "  make build                  compila o agente C (cmake + make)"
 	@echo "  make up                     sobe stack + ingestor (background)"
 	@echo "  make up-fg                  igual, ingestor em foreground"
-	@echo "  make up-llm                 sobe stack e baixa modelo Ollama"
 	@echo "  make down                   derruba stack + mata ingestor"
 	@echo "  make agent IFACE=eth0       roda o agente na interface (sudo)"
 	@echo "  make smoke                  build + replay suite"
 	@echo "  make test                   alias para smoke"
-	@echo "  make dash NAME=x DESC=...   gera dashboard Grafana via LLM local"
+	@echo "  make dash NAME=x DESC=...   gera dashboard Grafana via Groq"
 	@echo "  make clean                  remove build/ e caches"
 
 install:
@@ -42,9 +41,6 @@ up:
 
 up-fg:
 	./scripts/up.sh --foreground
-
-up-llm:
-	./scripts/up.sh --pull-llm
 
 down:
 	./scripts/down.sh

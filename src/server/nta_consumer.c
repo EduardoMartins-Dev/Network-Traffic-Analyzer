@@ -114,7 +114,8 @@ int nta_amqp_open(NtaAmqp *a, const NtaConfig *cfg,
  * Consume loop                                                               *
  * -------------------------------------------------------------------------- */
 int nta_amqp_consume_loop(NtaAmqp *a, const char *queue,
-                           nta_on_message_fn handler, void *user_ctx) {
+                           nta_on_message_fn handler, void *user_ctx,
+                           atomic_int *worker_stop) {
     if (!a->connected) return -1;
 
     /* auto_ack=1 mantém paridade com data_ingestor.py. Tradeoff: mensagens
@@ -128,7 +129,8 @@ int nta_amqp_consume_loop(NtaAmqp *a, const char *queue,
 
     char agent_id[AGENT_ID_MAX + 1];
 
-    while (!nta_should_stop()) {
+    while (!nta_should_stop() &&
+           !(worker_stop && atomic_load_explicit(worker_stop, memory_order_relaxed))) {
         amqp_envelope_t envelope;
         amqp_maybe_release_buffers(a->conn);
 
@@ -166,6 +168,62 @@ int nta_amqp_consume_loop(NtaAmqp *a, const char *queue,
         amqp_destroy_envelope(&envelope);
     }
 
+    return 0;
+}
+
+/* -------------------------------------------------------------------------- *
+ * Declare extra queue                                                        *
+ * Idempotente: AMQP queue_declare com mesmas flags é no-op se já existe.    *
+ * -------------------------------------------------------------------------- */
+int nta_amqp_declare_queue(NtaAmqp *a, const char *queue) {
+    if (!a || !a->connected || !queue) return -1;
+    amqp_queue_declare(a->conn, a->channel, amqp_cstring_bytes(queue),
+                       0, 1, 0, 0, amqp_empty_table);
+    if (!amqp_reply_ok(amqp_get_rpc_reply(a->conn), "queue_declare(extra)")) {
+        return -1;
+    }
+    return 0;
+}
+
+/* -------------------------------------------------------------------------- *
+ * Publish                                                                    *
+ * Default exchange ("") + routing_key = queue name. delivery_mode=2          *
+ * (persistente). Header `x-agent-id` carrega identidade do agente original  *
+ * (não pode usar properties.user_id porque RabbitMQ valida contra o user    *
+ * AMQP logado, que aqui é o nta-server, não o agente).                      *
+ * -------------------------------------------------------------------------- */
+int nta_amqp_publish(NtaAmqp *a, const char *queue, const char *agent_id,
+                     const char *body, size_t len) {
+    if (!a || !a->connected || !queue || !body) return -1;
+
+    amqp_basic_properties_t props;
+    memset(&props, 0, sizeof(props));
+    props._flags        = AMQP_BASIC_CONTENT_TYPE_FLAG
+                        | AMQP_BASIC_DELIVERY_MODE_FLAG
+                        | AMQP_BASIC_HEADERS_FLAG;
+    props.content_type  = amqp_cstring_bytes("application/json");
+    props.delivery_mode = 2;
+
+    amqp_table_entry_t hdr_entry;
+    hdr_entry.key                = amqp_cstring_bytes("x-agent-id");
+    hdr_entry.value.kind         = AMQP_FIELD_KIND_UTF8;
+    hdr_entry.value.value.bytes  = amqp_cstring_bytes(agent_id ? agent_id : "unknown");
+    props.headers.num_entries    = 1;
+    props.headers.entries        = &hdr_entry;
+
+    amqp_bytes_t body_bytes;
+    body_bytes.bytes = (void *)body;
+    body_bytes.len   = len;
+
+    int rc = amqp_basic_publish(a->conn, a->channel,
+                                 amqp_cstring_bytes(""),     /* default exchange */
+                                 amqp_cstring_bytes(queue),  /* routing key */
+                                 0, 0, &props, body_bytes);
+    if (rc != AMQP_STATUS_OK) {
+        fprintf(stderr, "[AMQP] publish em '%s' falhou: %s\n",
+                queue, amqp_error_string2(rc));
+        return -1;
+    }
     return 0;
 }
 

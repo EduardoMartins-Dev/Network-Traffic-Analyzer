@@ -2,6 +2,7 @@
 #define NTA_CONSUMER_H
 
 #include <stddef.h>
+#include <stdatomic.h>
 #include <amqp.h>
 #include "nta_server.h"
 
@@ -24,11 +25,12 @@ typedef struct {
 int nta_amqp_open(NtaAmqp *a, const NtaConfig *cfg,
                   const char *queue, int prefetch_count);
 
-/* Inicia basic_consume na fila e bloqueia consumindo até nta_should_stop().
- * Usa auto_ack=1 (igual ao data_ingestor.py atual). Timeout interno de 1s
- * garante que SIGINT seja responsivo. Retorna 0 em shutdown limpo. */
+/* Inicia basic_consume e bloqueia consumindo até nta_should_stop() ou
+ * `worker_stop` virar 1 (NULL = ignora — só global). Usa auto_ack=1.
+ * Timeout interno de 1s garante responsividade aos sinais.                */
 int nta_amqp_consume_loop(NtaAmqp *a, const char *queue,
-                           nta_on_message_fn handler, void *user_ctx);
+                           nta_on_message_fn handler, void *user_ctx,
+                           atomic_int *worker_stop);
 
 /* Declara fila adicional como durável no canal já aberto. Usado pra criar
  * a narrator_queue antes de publicar nela. Retorna 0 em sucesso. */
