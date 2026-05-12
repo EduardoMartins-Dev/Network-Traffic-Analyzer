@@ -32,6 +32,12 @@ else
     exit 1
 fi
 
+# mTLS — gera CA + server cert se ainda não existem (RabbitMQ.conf espera os arquivos).
+if [ ! -f deploy/secrets/tls/server.crt ] || [ ! -f deploy/secrets/tls/ca.crt ]; then
+    echo "▶ Gerando CA e cert do broker (mTLS multi-agente)"
+    "$ROOT_DIR/scripts/gen_agent_cert.sh" server
+fi
+
 echo "▶ Subindo infra"
 docker compose up -d
 
@@ -49,6 +55,10 @@ if [ "$RMQ_READY" -eq 0 ]; then
     echo "✗ RabbitMQ não ficou pronto em 60s." >&2
     exit 1
 fi
+
+# Retention hot 7d + bucket warm 90d + task de downsampling (idempotente).
+"$ROOT_DIR/scripts/influx_retention.sh" || \
+    echo "⚠ influx_retention.sh falhou — retention/downsampling não aplicado."
 
 # Narrator (embutido no nta-server) usa Groq Cloud.
 if [ ! -f deploy/secrets/groq.env ]; then

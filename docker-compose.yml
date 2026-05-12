@@ -8,13 +8,17 @@ services:
     hostname: rabbitmq
     restart: always
     ports:
-      - "5674:5672"   # Porta para o código C/Python
+      - "5674:5672"   # AMQP PLAIN (compat existente)
+      - "5671:5671"   # AMQP TLS (mTLS multi-agente — v7.0)
       - "15673:15672" # Painel Web do RabbitMQ
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
     volumes:
-      - ./rabbitmq_data:/var/lib/rabbitmq # Salva as filas e mensagens
+      - ./rabbitmq_data:/var/lib/rabbitmq
+      - ./deploy/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro,z
+      - ./deploy/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro,z
+      - ./deploy/secrets/tls:/etc/rabbitmq/tls:ro,z
 
   # INFLUXDB
   influxdb:

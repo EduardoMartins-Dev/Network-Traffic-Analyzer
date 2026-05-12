@@ -53,8 +53,11 @@ void init_queue(void) {
     const char *token   = env_or("AGENT_TOKEN",         "guest");
     const char *queue   = env_or("AGENT_QUEUE",         "traffic_queue");
     const char *metrics = env_or("AGENT_METRICS_QUEUE", "traffic_metrics");
-    int         use_tls = atoi(env_or("AGENT_USE_TLS",  "0"));
-    const char *ca_cert = getenv("AGENT_CA_CERT");
+    int         use_tls     = atoi(env_or("AGENT_USE_TLS",  "0"));
+    const char *ca_cert     = getenv("AGENT_CA_CERT");
+    const char *client_cert = getenv("AGENT_CLIENT_CERT");
+    const char *client_key  = getenv("AGENT_CLIENT_KEY");
+    int         use_mtls    = (use_tls && client_cert && client_key);
 
     strncpy(g_queue_name,    queue,   sizeof(g_queue_name)    - 1);
     strncpy(g_metrics_queue, metrics, sizeof(g_metrics_queue) - 1);
@@ -75,6 +78,13 @@ void init_queue(void) {
         } else {
             amqp_ssl_socket_set_verify_peer(socket, 0);
         }
+        if (use_mtls) {
+            if (amqp_ssl_socket_set_key(socket, client_cert, client_key) != AMQP_STATUS_OK) {
+                fprintf(stderr, "[RABBIT] Falha ao carregar client cert/key (%s, %s).\n",
+                        client_cert, client_key);
+                exit(EXIT_FAILURE);
+            }
+        }
     } else {
         socket = amqp_tcp_socket_new(conn);
         if (!socket) {
@@ -88,10 +98,12 @@ void init_queue(void) {
         exit(EXIT_FAILURE);
     }
 
-    amqp_rpc_reply_t login = amqp_login(conn, vhost, 0, MAX_FRAME_SIZE, 0,
-                                         AMQP_SASL_METHOD_PLAIN, id, token);
+    amqp_rpc_reply_t login = use_mtls
+        ? amqp_login(conn, vhost, 0, MAX_FRAME_SIZE, 0, AMQP_SASL_METHOD_EXTERNAL, "")
+        : amqp_login(conn, vhost, 0, MAX_FRAME_SIZE, 0, AMQP_SASL_METHOD_PLAIN, id, token);
     if (login.reply_type != AMQP_RESPONSE_NORMAL) {
-        fprintf(stderr, "[RABBIT] Erro de autenticacao. Verifique AGENT_ID/TOKEN.\n");
+        fprintf(stderr, "[RABBIT] Erro de autenticacao (%s). Verifique AGENT_ID/TOKEN ou cert.\n",
+                use_mtls ? "EXTERNAL" : "PLAIN");
         exit(EXIT_FAILURE);
     }
 
@@ -107,8 +119,8 @@ void init_queue(void) {
                        0, 1, 0, 0, amqp_empty_table);
     amqp_get_rpc_reply(conn);
 
-    printf("[RABBIT] Conectado em %s:%d | TLS: %s | Agente: %s\n",
-           host, port, use_tls ? "sim" : "nao", id);
+    printf("[RABBIT] Conectado em %s:%d | TLS: %s | mTLS: %s | Agente: %s\n",
+           host, port, use_tls ? "sim" : "nao", use_mtls ? "sim" : "nao", id);
     printf("[RABBIT] Filas — telemetria: '%s' | metricas: '%s'\n",
            g_queue_name, g_metrics_queue);
 }

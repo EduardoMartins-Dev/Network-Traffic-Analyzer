@@ -1,22 +1,36 @@
 #!/usr/bin/env bash
 # provision_agent.sh — cria credencial RabbitMQ + chave HMAC de um agente.
-# Uso: scripts/provision_agent.sh <nome-do-agente>
+# Uso: scripts/provision_agent.sh <nome-do-agente> [--mtls]
 #
 # Cria:
 #   user  agent-<nome> no vhost /          → write em traffic_queue, traffic_metrics
 #   user  agent-<nome> no vhost /commands  → read em cmd.<nome>
 #   fila  cmd.<nome> no vhost /commands    (durable)
 #   HMAC  32 bytes hex (chave única do agente)
+# Com --mtls: emite par cert/key cliente em deploy/secrets/tls/ (CN=agent-<nome>).
+#
 # Arquivos gerados:
 #   deploy/agent/<nome>.env         → copiar pra /etc/nta/agent.env na máquina
 #   deploy/secrets/ctl/<nome>.hmac  → chave HMAC, fica no control plane
 #   deploy/secrets/ctl/ctl-admin.env → credencial do publisher (primeira run)
+#   deploy/secrets/tls/agent-<nome>.{crt,key}  (apenas com --mtls)
 set -eu
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
-[ $# -eq 1 ] || { echo "Uso: $0 <nome-do-agente>"; exit 2; }
-NAME="$1"
+USE_MTLS=0
+NAME=""
+for arg in "$@"; do
+    case "$arg" in
+        --mtls) USE_MTLS=1 ;;
+        -*)     echo "flag desconhecida: $arg" >&2; exit 2 ;;
+        *)
+            [ -z "$NAME" ] || { echo "Uso: $0 <nome-do-agente> [--mtls]"; exit 2; }
+            NAME="$arg"
+            ;;
+    esac
+done
+[ -n "$NAME" ] || { echo "Uso: $0 <nome-do-agente> [--mtls]"; exit 2; }
 USER="agent-$NAME"
 CMD_VHOST="/commands"
 MGMT_URL="http://localhost:15673"
@@ -66,8 +80,14 @@ HMAC_KEY=$(openssl rand -hex 32)
 $RMQ delete_user "$USER" 2>/dev/null || true
 $RMQ add_user "$USER" "$TOKEN"
 
-# vhost / (telemetria): pode publicar só nas 2 filas, nada de configure/read
-$RMQ set_permissions -p / "$USER" '^$' '^(traffic_queue|traffic_metrics)$' '^$'
+# vhost / (telemetria):
+# - configure: redeclarar próprias filas (publisher.c roda queue_declare passive=0)
+# - write:     amq.default (default exchange p/ publish por routing key) + as 2 filas
+# - read:      nenhum
+$RMQ set_permissions -p / "$USER" \
+    '^(traffic_queue|traffic_metrics)$' \
+    '^(amq\.default|traffic_queue|traffic_metrics)$' \
+    '^$'
 # vhost /commands: só pode ler da própria fila cmd.<nome>
 $RMQ set_permissions -p "$CMD_VHOST" "$USER" '^$' '^$' "^cmd\\.$NAME\$"
 
@@ -81,7 +101,12 @@ curl -fsS -u "ctl-admin:$CTL_TOKEN" -X PUT \
 # --- arquivos de saída --------------------------------------------------------
 mkdir -p deploy/agent deploy/secrets/ctl
 umask 077
-cat > "deploy/agent/$NAME.env" <<EOF
+if [ "$USE_MTLS" -eq 1 ]; then
+    "$ROOT_DIR/scripts/gen_agent_cert.sh" agent "$NAME"
+fi
+
+{
+    cat <<EOF
 # Instalar em /etc/nta/agent.env na máquina "$NAME" (chmod 600).
 # Carregar antes de subir o agente C e o agent_ctl.py.
 AGENT_NAME=$NAME
@@ -95,6 +120,18 @@ AGENT_METRICS_QUEUE=traffic_metrics
 AGENT_CMD_VHOST=$CMD_VHOST
 AGENT_HMAC_KEY=$HMAC_KEY
 EOF
+    if [ "$USE_MTLS" -eq 1 ]; then
+        cat <<EOF
+
+# mTLS — cert cliente substitui SASL PLAIN (CN=$USER)
+AGENT_SERVER_PORT=5671
+AGENT_USE_TLS=1
+AGENT_CA_CERT=/etc/nta-agent/ca.crt
+AGENT_CLIENT_CERT=/etc/nta-agent/$USER.crt
+AGENT_CLIENT_KEY=/etc/nta-agent/$USER.key
+EOF
+    fi
+} > "deploy/agent/$NAME.env"
 chmod 600 "deploy/agent/$NAME.env"
 
 printf '%s\n' "$HMAC_KEY" > "deploy/secrets/ctl/$NAME.hmac"

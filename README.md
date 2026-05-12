@@ -8,7 +8,7 @@
 ![Docker](https://img.shields.io/badge/Docker-Infrastructure-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
-> **Versão atual: v7.0-rc** — nta-server em C, narrator C (Groq), pool adaptativo de workers via RabbitMQ Mgmt API. Faltam retention InfluxDB e mTLS multi-agente para fechar v7.0.
+> **Versão atual: v7.0** — nta-server em C, narrator C (Groq), pool adaptativo via RabbitMQ Mgmt API, retention 7d hot + 90d warm downsampled e mTLS multi-agente (SASL EXTERNAL).
 
 O **Network Traffic Analyzer** é um sistema de monitoramento e detecção de intrusão (IDS) de alta performance desenvolvido em C (C11), com arquitetura inspirada no modelo **Agent/Server do Zabbix**.
 
@@ -521,6 +521,91 @@ diferenciar dos dashboards versionados manualmente. Re-rodar com mesmo
 
 ---
 
+## mTLS Multi-Agente (v7.0)
+
+Em deploy com múltiplos sensores, cada agente autentica no broker via certificado cliente — o CN do cert é mapeado para o user RabbitMQ via `ssl_cert_login_from = common_name`. SASL muda de `PLAIN` para `EXTERNAL`, e a senha do user (`AGENT_TOKEN`) deixa de ser usada na conexão.
+
+**Fluxo de provisionamento:**
+
+```bash
+# 1. Stack precisa estar de pé (gera CA + cert do broker na 1ª subida)
+./scripts/up.sh
+
+# 2. Provisiona o agente com cert cliente
+./scripts/provision_agent.sh host-a --mtls
+# Saídas:
+#   deploy/agent/host-a.env             → /etc/nta/agent.env na máquina remota
+#   deploy/secrets/tls/agent-host-a.crt → /etc/nta-agent/agent-host-a.crt
+#   deploy/secrets/tls/agent-host-a.key → /etc/nta-agent/agent-host-a.key
+#   deploy/secrets/tls/ca.crt           → /etc/nta-agent/ca.crt
+```
+
+**Vars novas no agente:**
+
+| Variável | Descrição |
+|---|---|
+| `AGENT_USE_TLS=1` | Ativa TLS (porta `5671`) |
+| `AGENT_CA_CERT` | CA que assinou o cert do broker |
+| `AGENT_CLIENT_CERT` | Cert cliente — CN deve bater com `agent-<nome>` |
+| `AGENT_CLIENT_KEY` | Chave privada do cert cliente (chmod 600) |
+
+Com `AGENT_CLIENT_CERT` + `AGENT_CLIENT_KEY` presentes, o publisher chama `amqp_ssl_socket_set_key()` e faz `SASL EXTERNAL`. Sem eles, fallback p/ PLAIN com `AGENT_ID`/`AGENT_TOKEN` (compat com agentes legados).
+
+**RabbitMQ:** listener 5671 + `auth_mechanisms = PLAIN, EXTERNAL` em `deploy/rabbitmq/rabbitmq.conf`. Plugin `rabbitmq_auth_mechanism_ssl` habilitado em `deploy/rabbitmq/enabled_plugins`.
+
+**Control plane:** continua via HMAC-SHA256 (`ctl.py`/`agent_ctl.py`) — mTLS cobre só a telemetria AMQP.
+
+**Troubleshooting:**
+
+```bash
+# Inspecionar cert emitido
+openssl x509 -in deploy/secrets/tls/agent-host-a.crt -noout -subject -issuer
+
+# Verificar chain
+openssl verify -CAfile deploy/secrets/tls/ca.crt deploy/secrets/tls/agent-host-a.crt
+
+# Logs do broker ao recusar cert
+docker logs rabbitmq | grep -i ssl
+```
+
+---
+
+## Retention & Downsampling (v7.0)
+
+O servidor mantém duas camadas de retenção no InfluxDB:
+
+| Bucket | TTL | Origem | Uso |
+|---|---|---|---|
+| `network_traffic` | 7 dias | Escrita ao vivo do `nta-server` | Dashboards em tempo real, debugging |
+| `network_traffic_warm` | 90 dias | Task Flux `downsample_traffic_1m` (1/min) | Tendências históricas, post-mortem |
+
+O `scripts/up.sh` chama `scripts/influx_retention.sh` automaticamente após o RabbitMQ ficar pronto. O script é idempotente — não destrói dados ao re-rodar.
+
+A task de downsampling agrega `traffic` por janela de 1 minuto:
+- `bytes` → soma
+- `kc_score` → máximo
+
+Resultado gravado em `network_traffic_warm` com `_measurement = traffic_1m`.
+
+Customização (env vars no shell antes de `up.sh`):
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `INFLUX_HOT_SECONDS` | `604800` (7d) | TTL bucket hot |
+| `INFLUX_WARM_SECONDS` | `7776000` (90d) | TTL bucket warm |
+| `INFLUX_WARM_BUCKET` | `network_traffic_warm` | Nome do bucket warm |
+| `INFLUX_CONTAINER` | `influxdb` | Container alvo |
+| `INFLUX_ORG` | `cybersecurity` | Org InfluxDB |
+| `INFLUX_TOKEN` | `my-super-secret-auth-token` | Admin token |
+
+Inspeção manual:
+```bash
+docker exec influxdb influx bucket list
+docker exec influxdb influx task list
+```
+
+---
+
 ## Formato do Evento JSON publicado
 
 A partir da v5.0 o agente publica **lotes** (arrays) de eventos em uma única mensagem AMQP:
@@ -607,7 +692,7 @@ O workflow `.github/workflows/test-ids.yml` executa a cada push/PR:
 | v5.5 | DX (install/quickstart/Makefile) + LLM Dashboard Generator | ✅ |
 | v5.1 | Validação Windows (Npcap + multi-thread) | Planejado |
 | v6.0 | AI Narrator (LLM via Groq) | ✅ migrado para C em v7.0 |
-| v7.0-rc | nta-server em C + narrator C (Groq) + pool adaptativo (Mgmt API) | 🚧 RC — falta retention/downsampling InfluxDB + mTLS multi-agente · cluster RabbitMQ deferido p/ v10.0 |
+| v7.0 | nta-server em C + narrator C (Groq) + pool adaptativo (Mgmt API) + retention 7d/90d + mTLS multi-agente | ✅ feature-complete · cluster RabbitMQ deferido p/ v10.0 |
 | v8.0 | Threat Intelligence (GeoIP + AbuseIPDB + IoC matching) | Planejado |
 | v9.0 | Alta Performance (AF_PACKET + TPACKET_V3 + zero-copy) | Planejado |
 | v10.0 | Produção: VPS + Terraform + Nginx + Let's Encrypt (deploy final) | Planejado |
