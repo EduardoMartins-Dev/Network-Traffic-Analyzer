@@ -69,8 +69,8 @@ void nta_config_load(NtaConfig *cfg) {
 
     cfg->narrator_min_score = env_int("NARRATOR_MIN_SCORE", 80);
 
-    cfg->geoip_db_path     = env_or("GEOIP_DB_PATH",     "./GeoLite2-City.mmdb");
-    cfg->geoip_asn_db_path = env_or("GEOIP_ASN_DB_PATH", "./GeoLite2-ASN.mmdb");
+    cfg->geoip_db_path     = env_or("GEOIP_DB_PATH",     "./data/GeoLite2-City.mmdb");
+    cfg->geoip_asn_db_path = env_or("GEOIP_ASN_DB_PATH", "./data/GeoLite2-ASN.mmdb");
 
     cfg->ioc_path = env_or("IOC_PATH", "./deploy/ioc/blocklist.json");
 
