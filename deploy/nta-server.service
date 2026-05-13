@@ -1,0 +1,50 @@
+[Unit]
+Description=Network Traffic Analyzer — central server (nta-server)
+Documentation=https://github.com/EduardoMartins-Dev/Network-Traffic-Analyzer
+After=network-online.target docker.service
+Wants=network-online.target
+# Desiste depois de 5 falhas em 60s para não mascarar bug real
+# (ex.: RabbitMQ persistentemente inacessível, token Influx inválido).
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+# Diretório de trabalho — deploy esperado em /opt/nta. Ajustar se diferente.
+WorkingDirectory=/opt/nta
+EnvironmentFile=-/etc/default/nta-server
+ExecStart=/opt/nta/build/nta-server
+
+# Reinicia em caso de falha (ex.: RabbitMQ derruba conn, Groq 5xx).
+Restart=on-failure
+RestartSec=5
+
+# nta-server NÃO precisa privilégios — só fala HTTP + AMQP outbound.
+# Recomendado criar usuário dedicado:
+#   useradd -r -s /sbin/nologin nta-server
+User=nta-server
+Group=nta-server
+
+# Hardening — só precisa ler ./data/*.mmdb, ./deploy/secrets/*.env,
+# ./deploy/ioc/blocklist.json e gravar nada no disco.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/log/nta
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+# Sem acesso de rede a nada além de localhost+ AMQP/HTTP outbound.
+# Em prod, restringir via PrivateNetwork=false (default) + iptables egress.
+
+# Logging via journal.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nta-server
+
+[Install]
+WantedBy=multi-user.target

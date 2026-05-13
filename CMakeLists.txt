@@ -75,6 +75,7 @@ if(NOT WIN32)
             src/server/nta_whois.c
             src/server/nta_narrator.c
             src/server/nta_scaler.c
+            src/server/nta_health.c
             src/output/cJSON.c
     )
 

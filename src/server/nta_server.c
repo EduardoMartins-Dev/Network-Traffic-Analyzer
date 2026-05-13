@@ -27,6 +27,7 @@
 #include "../../include/nta_abuse.h"
 #include "../../include/nta_whois.h"
 #include "../../include/nta_narrator.h"
+#include "../../include/nta_health.h"
 #include "../../include/nta_scaler.h"
 #include "../../include/cJSON.h"
 
@@ -624,6 +625,10 @@ int main(int argc, char *argv[]) {
         if (!narrator_ok) fprintf(stderr, "[NARR] pthread_create falhou\n");
     }
 
+    /* Healthcheck HTTP (port 9091 default). */
+    NtaHealth health;
+    nta_health_start(&health);
+
     /* Scaler thread (opcional). */
     pthread_t scaler_tid;
     int scaler_ok = 0;
@@ -654,6 +659,8 @@ int main(int argc, char *argv[]) {
     if (metrics_ok)  pthread_join(metrics_tid,  NULL);
     if (narrator_ok) pthread_join(narrator_tid, NULL);
     if (scaler_ok)   pthread_join(scaler_tid,   NULL);
+
+    nta_health_stop(&health);
 
     pool_destroy(&pool);
     nta_whois_close(whois);
