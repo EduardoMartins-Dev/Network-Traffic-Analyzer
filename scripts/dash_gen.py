@@ -56,7 +56,7 @@ GRAFANA_API_KEY = os.getenv("GRAFANA_API_KEY", "")
 GRAFANA_FOLDER_UID = os.getenv("GRAFANA_FOLDER_UID", "")
 
 # Schema do InfluxDB do projeto (bucket: network_traffic, org: cybersecurity).
-# Mantido aqui sincronizado com src/ingestor/data_ingestor.py.
+# Mantido aqui sincronizado com src/server/nta_influx.c (v7.0+).
 SCHEMA = """
 Datasource Grafana: type=influxdb, uid=influxdb-nta, language=Flux, bucket=network_traffic.
 

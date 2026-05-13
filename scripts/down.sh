@@ -20,8 +20,8 @@ elif [ -S "/run/user/$(id -u)/podman/podman.sock" ]; then
     export DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"
 fi
 
-echo "▶ Parando data_ingestor.py"
-pkill -f "python3 data_ingestor.py" 2>/dev/null && echo "  morto." || echo "  não estava rodando."
+echo "▶ Parando nta-server"
+pkill -f "./build/nta-server" 2>/dev/null && echo "  morto." || echo "  não estava rodando."
 
 if [ "$KILL_AGENT" -eq 1 ]; then
     echo "▶ Parando NetworkTrafficAnalyzer (sudo)"

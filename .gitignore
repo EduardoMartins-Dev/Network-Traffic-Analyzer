@@ -4,7 +4,8 @@
 /cmake
 /cmake-build-debug
 session
-traffic_log.txt
+/traffic_log.txt
+/Network_Traffic_Analyzer
 /influxdb_config
 /influxdb_data
 /grafana_data

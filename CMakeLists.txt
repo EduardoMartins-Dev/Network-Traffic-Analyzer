@@ -57,17 +57,7 @@ else()
     )
 endif()
 
-# --- INGESTOR: Worker Python (copia para o diretório de build) ---
-add_custom_target(DataIngestor ALL
-        COMMAND ${CMAKE_COMMAND} -E copy
-        ${CMAKE_SOURCE_DIR}/src/ingestor/data_ingestor.py
-        ${CMAKE_BINARY_DIR}/data_ingestor.py
-        COMMAND ${CMAKE_COMMAND} -E copy
-        ${CMAKE_SOURCE_DIR}/src/ingestor/narrator.py
-        ${CMAKE_BINARY_DIR}/narrator.py
-)
-
-# --- SERVIDOR: nta-server em C (v7.0 — substitui o data_ingestor.py) ---
+# --- SERVIDOR: nta-server em C (substitui o ingestor Python legado da v6.0) ---
 # Dependências: librabbitmq (já presente), libcurl, libmaxminddb.
 # Fedora/Toolbx: dnf install libcurl-devel libmaxminddb-devel
 if(NOT WIN32)
