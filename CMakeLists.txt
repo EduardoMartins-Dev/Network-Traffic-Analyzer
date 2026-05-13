@@ -82,6 +82,7 @@ if(NOT WIN32)
             src/server/nta_geoip.c
             src/server/nta_ioc.c
             src/server/nta_abuse.c
+            src/server/nta_whois.c
             src/server/nta_narrator.c
             src/server/nta_scaler.c
             src/output/cJSON.c

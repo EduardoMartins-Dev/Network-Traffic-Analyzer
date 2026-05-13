@@ -25,6 +25,7 @@
 #include "../../include/nta_geoip.h"
 #include "../../include/nta_ioc.h"
 #include "../../include/nta_abuse.h"
+#include "../../include/nta_whois.h"
 #include "../../include/nta_narrator.h"
 #include "../../include/nta_scaler.h"
 #include "../../include/cJSON.h"
@@ -222,13 +223,15 @@ static void metrics_handler(const char *body, size_t len,
 typedef struct {
     NtaInflux  *inf;
     NtaNarrator *nar;
+    NtaWhois   *whois;        /* shared, pode ser NULL (v8.0 M5) */
     const NtaNarratorCfg *ncfg;
 } NarratorCtx;
 
 static void narrator_handler(const char *body, size_t len,
                              const char *agent_id, void *user_ctx) {
     NarratorCtx *ctx = (NarratorCtx *)user_ctx;
-    char *narrative = nta_narrator_call(ctx->nar, body, len, agent_id);
+    char *narrative = nta_narrator_call(ctx->nar, ctx->whois, body, len,
+                                         agent_id);
     if (!narrative) return;
     nta_influx_write_narrative(ctx->inf, body, len, narrative,
                                agent_id, nta_narrator_backend(ctx->ncfg));
@@ -246,6 +249,7 @@ typedef struct {
     NtaIoc         *ioc;       /* shared (v8.0 M3) */
     NtaAbuse       *abuse;     /* shared (v8.0 M4) */
     int             abuse_min; /* threshold p/ republish narrator */
+    NtaWhois       *whois;     /* shared (v8.0 M5) — só usado pelo narrator worker */
     NtaAmqp         amqp;      /* per-worker */
     NtaInflux       influx;    /* per-worker */
     const NtaNarratorCfg *ncfg;  /* só pro narrator worker */
@@ -356,7 +360,8 @@ static void *narrator_worker_main(void *arg) {
     fprintf(stderr, "[NARR] pronto (queue=%s backend=%s).\n",
             w->cfg->narrator_queue, nta_narrator_backend(w->ncfg));
 
-    NarratorCtx ctx = { .inf = &w->influx, .nar = &nar, .ncfg = w->ncfg };
+    NarratorCtx ctx = { .inf = &w->influx, .nar = &nar, .whois = w->whois,
+                        .ncfg = w->ncfg };
     nta_amqp_consume_loop(&w->amqp, w->cfg->narrator_queue,
                            narrator_handler, &ctx, NULL);
 
@@ -544,6 +549,17 @@ int main(int argc, char *argv[]) {
                 "sem field abuse_score. Veja deploy/secrets/abuseipdb.env.example\n");
     }
 
+    /* WHOIS — sem key, default on. Off via WHOIS_ENABLED=0. */
+    NtaWhois *whois = NULL;
+    const char *whois_env = getenv("WHOIS_ENABLED");
+    if (!whois_env || strcmp(whois_env, "0") != 0) {
+        int wt = env_int("WHOIS_TIMEOUT", 5);
+        int wttl = env_int("WHOIS_TTL", 86400);
+        whois = nta_whois_open(wt, wttl);
+    } else {
+        fprintf(stderr, "⚠ WHOIS desabilitado (WHOIS_ENABLED=0).\n");
+    }
+
     /* Narrator config — repo_root = cwd (assume script up.sh ou make rodando
      * a partir da raiz). Se GROQ_API_KEY ausente, narrator worker não sobe. */
     NtaNarratorCfg ncfg;
@@ -564,6 +580,7 @@ int main(int argc, char *argv[]) {
     if (pool_init(&pool, &cfg, geo, ioc, abuse,
                   abuse_cfg.min_republish_score, pool_max) != 0) {
         fprintf(stderr, "✗ pool_init falhou\n");
+        nta_whois_close(whois);
         nta_abuse_close(abuse);
         nta_ioc_close(ioc);
         nta_geo_close(geo);
@@ -597,7 +614,8 @@ int main(int argc, char *argv[]) {
     if (!metrics_ok) fprintf(stderr, "[METRICS] pthread_create falhou\n");
 
     /* Narrator worker (thread fixa, fora do pool, opcional). */
-    Worker narrator_w = { .worker_id = -2, .cfg = &cfg, .geo = NULL, .ncfg = &ncfg };
+    Worker narrator_w = { .worker_id = -2, .cfg = &cfg, .geo = NULL,
+                          .whois = whois, .ncfg = &ncfg };
     pthread_t narrator_tid;
     int narrator_ok = 0;
     if (ncfg.enabled) {
@@ -623,12 +641,13 @@ int main(int argc, char *argv[]) {
     /* Restaura máscara na main pra receber SIGINT/SIGTERM. */
     pthread_sigmask(SIG_SETMASK, &prev_set, NULL);
 
-    fprintf(stderr, "▶ %d traffic + %d metrics + %d narrator + %d scaler — '%s' → InfluxDB%s%s%s (Ctrl+C p/ parar)\n",
+    fprintf(stderr, "▶ %d traffic + %d metrics + %d narrator + %d scaler — '%s' → InfluxDB%s%s%s%s (Ctrl+C p/ parar)\n",
             pool_size_cb(&pool), metrics_ok ? 1 : 0, narrator_ok ? 1 : 0,
             scaler_ok ? 1 : 0, cfg.queue_name,
             geo   ? " (+GeoIP)" : "",
             ioc   ? " (+IoC)"   : "",
-            abuse ? " (+Abuse)" : "");
+            abuse ? " (+Abuse)" : "",
+            whois ? " (+WHOIS)" : "");
 
     /* Espera todos terminarem ao receber stop global. */
     pool_join_all(&pool);
@@ -637,6 +656,7 @@ int main(int argc, char *argv[]) {
     if (scaler_ok)   pthread_join(scaler_tid,   NULL);
 
     pool_destroy(&pool);
+    nta_whois_close(whois);
     nta_abuse_close(abuse);
     nta_ioc_close(ioc);
     nta_geo_close(geo);

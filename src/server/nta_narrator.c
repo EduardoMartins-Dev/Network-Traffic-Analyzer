@@ -169,8 +169,9 @@ static size_t resp_write_cb(char *ptr, size_t sz, size_t nm, void *u) {
  * Build prompt body — JSON request p/ Groq                                   *
  * -------------------------------------------------------------------------- */
 static char *build_request_body(const char *model, const char *event_json,
-                                size_t event_len, const char *agent_id) {
-    /* user prompt = "Incidente:\n" + JSON original (com agent_id injetado).
+                                size_t event_len, const char *agent_id,
+                                const NtaWhoisInfo *whois_info) {
+    /* user prompt = ["Origem: ...\n"]? + "Incidente:\n" + JSON original.
      * Reparseia evento p/ injetar agent_id sem confiar em concat de strings. */
     cJSON *evt = cJSON_ParseWithLength(event_json, event_len);
     if (!evt) evt = cJSON_CreateObject();
@@ -182,10 +183,26 @@ static char *build_request_body(const char *model, const char *event_json,
     cJSON_Delete(evt);
     if (!evt_str) return NULL;
 
-    size_t up_cap = strlen(evt_str) + 32;
+    char whois_line[512] = {0};
+    if (whois_info && whois_info->has_data) {
+        snprintf(whois_line, sizeof(whois_line),
+                 "Origem (WHOIS): %s%s%s%s%s\n",
+                 whois_info->org[0]     ? whois_info->org     : "",
+                 (whois_info->org[0] && whois_info->country[0]) ? " (" : "",
+                 whois_info->country[0] ? whois_info->country : "",
+                 (whois_info->org[0] && whois_info->country[0]) ? ")"  : "",
+                 whois_info->netname[0] ? " — netname: "      : "");
+        if (whois_info->netname[0]) {
+            size_t l = strlen(whois_line);
+            snprintf(whois_line + l, sizeof(whois_line) - l, "%s\n",
+                     whois_info->netname);
+        }
+    }
+
+    size_t up_cap = strlen(evt_str) + strlen(whois_line) + 32;
     char *user_prompt = malloc(up_cap);
     if (!user_prompt) { free(evt_str); return NULL; }
-    snprintf(user_prompt, up_cap, "Incidente:\n%s", evt_str);
+    snprintf(user_prompt, up_cap, "%sIncidente:\n%s", whois_line, evt_str);
     free(evt_str);
 
     cJSON *root = cJSON_CreateObject();
@@ -210,11 +227,26 @@ static char *build_request_body(const char *model, const char *event_json,
 /* -------------------------------------------------------------------------- *
  * Call                                                                       *
  * -------------------------------------------------------------------------- */
-char *nta_narrator_call(NtaNarrator *n, const char *event_json, size_t event_len,
+char *nta_narrator_call(NtaNarrator *n, NtaWhois *whois,
+                        const char *event_json, size_t event_len,
                         const char *agent_id) {
     if (!n || !n->ready || !event_json) return NULL;
 
-    char *req = build_request_body(n->cfg->model, event_json, event_len, agent_id);
+    /* WHOIS opcional — só pra enriquecer prompt. Falha não bloqueia narrator. */
+    NtaWhoisInfo wi = {0};
+    if (whois) {
+        cJSON *evt = cJSON_ParseWithLength(event_json, event_len);
+        if (cJSON_IsObject(evt)) {
+            const cJSON *ip = cJSON_GetObjectItemCaseSensitive(evt, "src_ip");
+            if (cJSON_IsString(ip) && ip->valuestring) {
+                nta_whois_lookup(whois, ip->valuestring, &wi);
+            }
+        }
+        if (evt) cJSON_Delete(evt);
+    }
+
+    char *req = build_request_body(n->cfg->model, event_json, event_len,
+                                    agent_id, wi.has_data ? &wi : NULL);
     if (!req) return NULL;
     size_t req_len = strlen(req);
 

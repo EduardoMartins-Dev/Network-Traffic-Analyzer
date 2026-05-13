@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <curl/curl.h>
+#include "nta_whois.h"
 
 /* Config Groq carregado de env vars + deploy/secrets/groq.env. */
 typedef struct {
@@ -33,8 +34,11 @@ int  nta_narrator_open(NtaNarrator *n, const NtaNarratorCfg *cfg);
 void nta_narrator_close(NtaNarrator *n);
 
 /* POST Groq + extrai choices[0].message.content. Aloca string (caller free).
+ * Se `whois` != NULL: faz lookup do src_ip e prepende "Origem: <org>, <country>"
+ * ao user prompt — enriquece contexto LLM com atribuição da origem (v8.0 M5).
  * Retorna NULL em falha (HTTP, JSON malformado, timeout). */
-char *nta_narrator_call(NtaNarrator *n, const char *event_json, size_t event_len,
+char *nta_narrator_call(NtaNarrator *n, NtaWhois *whois,
+                        const char *event_json, size_t event_len,
                         const char *agent_id);
 
 /* "groq:<model>" pra tag backend no InfluxDB. Buffer estático. */
