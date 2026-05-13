@@ -93,7 +93,7 @@ static bool json_get_num(const cJSON *obj, const char *key, double *out) {
  * -------------------------------------------------------------------------- */
 static int build_traffic_point(char *out, size_t cap,
                                const cJSON *evt, const char *agent_id,
-                               NtaGeo *geo, NtaIoc *ioc) {
+                               NtaGeo *geo, NtaIoc *ioc, NtaAbuse *abuse) {
     if (cap < 64) return 0;
 
     char esc_agent[MAX_TAG_LEN];
@@ -208,6 +208,18 @@ static int build_traffic_point(char *out, size_t cap,
         w += n;
     }
 
+    /* abuse_score — v8.0 M4. Field numérico (0-100). Skip se -1 (key ausente,
+     * IP privado, ou API fail). Lookup sob mutex interno — cache hits são
+     * instantâneos; cache miss bloqueia até HTTP (5s timeout). */
+    if (abuse) {
+        int abuse_s = nta_abuse_score(abuse, src_ip);
+        if (abuse_s >= 0) {
+            n = snprintf(out + w, cap - w, ",abuse_score=%d", abuse_s);
+            if (n <= 0 || (size_t)n >= cap - w) return 0;
+            w += n;
+        }
+    }
+
     n = snprintf(out + w, cap - w, "\n");
     if (n <= 0 || (size_t)n >= cap - w) return 0;
     w += n;
@@ -287,6 +299,7 @@ static int influx_post(NtaInflux *inf, const char *body, size_t len) {
 }
 
 int nta_influx_write_traffic(NtaInflux *inf, NtaGeo *geo, NtaIoc *ioc,
+                             NtaAbuse *abuse,
                              const char *body, size_t len,
                              const char *agent_id) {
     if (!inf->ready || !body || len == 0) return -1;
@@ -307,11 +320,12 @@ int nta_influx_write_traffic(NtaInflux *inf, NtaGeo *geo, NtaIoc *ioc,
         cJSON_ArrayForEach(item, root) {
             if (!cJSON_IsObject(item)) continue;
             int w = build_traffic_point(lp + lp_len, sizeof(lp) - lp_len,
-                                         item, agent_id, geo, ioc);
+                                         item, agent_id, geo, ioc, abuse);
             if (w > 0) { lp_len += w; n_events++; }
         }
     } else if (cJSON_IsObject(root)) {
-        int w = build_traffic_point(lp, sizeof(lp), root, agent_id, geo, ioc);
+        int w = build_traffic_point(lp, sizeof(lp), root, agent_id, geo, ioc,
+                                     abuse);
         if (w > 0) { lp_len = w; n_events = 1; }
     }
 

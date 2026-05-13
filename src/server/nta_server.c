@@ -24,6 +24,7 @@
 #include "../../include/nta_influx.h"
 #include "../../include/nta_geoip.h"
 #include "../../include/nta_ioc.h"
+#include "../../include/nta_abuse.h"
 #include "../../include/nta_narrator.h"
 #include "../../include/nta_scaler.h"
 #include "../../include/cJSON.h"
@@ -126,26 +127,49 @@ typedef struct {
     NtaInflux  *inf;
     NtaGeo     *geo;            /* shared, pode ser NULL */
     NtaIoc     *ioc;            /* shared, pode ser NULL (v8.0 M3) */
+    NtaAbuse   *abuse;          /* shared, pode ser NULL (v8.0 M4) */
     NtaAmqp    *amqp;           /* per-worker, mesmo do consumer */
     const char *narrator_queue;
-    int         min_score;      /* 0 desabilita republish */
+    int         min_score;      /* 0 desabilita republish kc_score */
+    int         abuse_min;      /* 0 desabilita republish abuse_score */
 } TrafficCtx;
 
 static void republish_if_high(TrafficCtx *ctx, const cJSON *evt,
                               const char *agent_id) {
-    if (!ctx->amqp || !ctx->narrator_queue || ctx->min_score <= 0) return;
+    if (!ctx->amqp || !ctx->narrator_queue) return;
+
+    /* Trigger 1: kc_score (kill chain). Trigger 2: abuse_score AbuseIPDB.
+     * Qualquer um dispara republish. */
+    int trigger = 0;
+    double kc = 0;
     const cJSON *score = cJSON_GetObjectItemCaseSensitive(evt, "kc_score");
-    if (!cJSON_IsNumber(score) || score->valuedouble < ctx->min_score) return;
+    if (ctx->min_score > 0 && cJSON_IsNumber(score)) {
+        kc = score->valuedouble;
+        if (kc >= ctx->min_score) trigger = 1;
+    }
+
+    int abuse_s = -1;
+    if (!trigger && ctx->abuse && ctx->abuse_min > 0) {
+        const cJSON *ip = cJSON_GetObjectItemCaseSensitive(evt, "src_ip");
+        const char *src = (cJSON_IsString(ip) && ip->valuestring)
+                          ? ip->valuestring : NULL;
+        if (src) {
+            abuse_s = nta_abuse_score(ctx->abuse, src);
+            if (abuse_s >= ctx->abuse_min) trigger = 2;
+        }
+    }
+    if (!trigger) return;
 
     char *s = cJSON_PrintUnformatted(evt);
     if (!s) return;
     if (nta_amqp_publish(ctx->amqp, ctx->narrator_queue, agent_id,
                          s, strlen(s)) == 0) {
         const cJSON *ip = cJSON_GetObjectItemCaseSensitive(evt, "src_ip");
-        fprintf(stderr, "[NARR] republish agent=%s src=%s score=%.0f\n",
+        fprintf(stderr, "[NARR] republish agent=%s src=%s kc=%.0f abuse=%d "
+                "trigger=%s\n",
                 agent_id,
                 (cJSON_IsString(ip) && ip->valuestring) ? ip->valuestring : "?",
-                score->valuedouble);
+                kc, abuse_s, (trigger == 1) ? "kc" : "abuse");
     }
     free(s);
 }
@@ -153,14 +177,15 @@ static void republish_if_high(TrafficCtx *ctx, const cJSON *evt,
 static void traffic_handler(const char *body, size_t len,
                             const char *agent_id, void *user_ctx) {
     TrafficCtx *ctx = (TrafficCtx *)user_ctx;
-    if (nta_influx_write_traffic(ctx->inf, ctx->geo, ctx->ioc,
+    if (nta_influx_write_traffic(ctx->inf, ctx->geo, ctx->ioc, ctx->abuse,
                                   body, len, agent_id) != 0) {
         fprintf(stderr, "[MSG] descarte agent=%s len=%zu (escrita falhou)\n",
                 agent_id, len);
         return;
     }
 
-    if (ctx->min_score <= 0) return;
+    /* Skip republish parse se ambos triggers off. */
+    if (ctx->min_score <= 0 && (ctx->abuse_min <= 0 || !ctx->abuse)) return;
 
     cJSON *root = cJSON_ParseWithLength(body, len);
     if (!root) return;
@@ -219,6 +244,8 @@ typedef struct {
     const NtaConfig *cfg;
     NtaGeo         *geo;       /* shared */
     NtaIoc         *ioc;       /* shared (v8.0 M3) */
+    NtaAbuse       *abuse;     /* shared (v8.0 M4) */
+    int             abuse_min; /* threshold p/ republish narrator */
     NtaAmqp         amqp;      /* per-worker */
     NtaInflux       influx;    /* per-worker */
     const NtaNarratorCfg *ncfg;  /* só pro narrator worker */
@@ -259,9 +286,11 @@ static void *worker_main(void *arg) {
         .inf            = &w->influx,
         .geo            = w->geo,
         .ioc            = w->ioc,
+        .abuse          = w->abuse,
         .amqp           = &w->amqp,
         .narrator_queue = w->cfg->narrator_queue,
         .min_score      = can_narrate ? w->cfg->narrator_min_score : 0,
+        .abuse_min      = can_narrate ? w->abuse_min : 0,
     };
     nta_amqp_consume_loop(&w->amqp, w->cfg->queue_name,
                            traffic_handler, &ctx, &w->stop);
@@ -353,20 +382,24 @@ typedef struct {
     const NtaConfig *cfg;
     NtaGeo         *geo;
     NtaIoc         *ioc;         /* shared (v8.0 M3) */
+    NtaAbuse       *abuse;       /* shared (v8.0 M4) */
+    int             abuse_min;
     int             next_id;     /* contador monotônico p/ worker_id */
 } TrafficPool;
 
 static int pool_init(TrafficPool *p, const NtaConfig *cfg, NtaGeo *geo,
-                     NtaIoc *ioc, int max) {
+                     NtaIoc *ioc, NtaAbuse *abuse, int abuse_min, int max) {
     memset(p, 0, sizeof(*p));
     p->slots  = calloc((size_t)max, sizeof(Worker));
     p->tids   = calloc((size_t)max, sizeof(pthread_t));
     p->active = calloc((size_t)max, sizeof(int));
     if (!p->slots || !p->tids || !p->active) return -1;
-    p->max = max;
-    p->cfg = cfg;
-    p->geo = geo;
-    p->ioc = ioc;
+    p->max       = max;
+    p->cfg       = cfg;
+    p->geo       = geo;
+    p->ioc       = ioc;
+    p->abuse     = abuse;
+    p->abuse_min = abuse_min;
     pthread_mutex_init(&p->mu, NULL);
     return 0;
 }
@@ -383,6 +416,8 @@ static int pool_spawn_one_locked(TrafficPool *p) {
     w->cfg       = p->cfg;
     w->geo       = p->geo;
     w->ioc       = p->ioc;
+    w->abuse     = p->abuse;
+    w->abuse_min = p->abuse_min;
     atomic_init(&w->stop, 0);
     if (pthread_create(&p->tids[idx], NULL, worker_main, w) != 0) {
         fprintf(stderr, "[POOL] pthread_create slot=%d falhou\n", idx);
@@ -501,6 +536,14 @@ int main(int argc, char *argv[]) {
                 "Veja deploy/ioc/blocklist.json.example\n", cfg.ioc_path);
     }
 
+    NtaAbuseCfg abuse_cfg;
+    nta_abuse_load(&abuse_cfg, ".");
+    NtaAbuse *abuse = nta_abuse_open(&abuse_cfg);
+    if (!abuse) {
+        fprintf(stderr, "⚠ AbuseIPDB desabilitado (ABUSEIPDB_API_KEY ausente) — "
+                "sem field abuse_score. Veja deploy/secrets/abuseipdb.env.example\n");
+    }
+
     /* Narrator config — repo_root = cwd (assume script up.sh ou make rodando
      * a partir da raiz). Se GROQ_API_KEY ausente, narrator worker não sobe. */
     NtaNarratorCfg ncfg;
@@ -518,8 +561,10 @@ int main(int argc, char *argv[]) {
     if (pool_max < cfg.num_workers) pool_max = cfg.num_workers;
 
     TrafficPool pool;
-    if (pool_init(&pool, &cfg, geo, ioc, pool_max) != 0) {
+    if (pool_init(&pool, &cfg, geo, ioc, abuse,
+                  abuse_cfg.min_republish_score, pool_max) != 0) {
         fprintf(stderr, "✗ pool_init falhou\n");
+        nta_abuse_close(abuse);
         nta_ioc_close(ioc);
         nta_geo_close(geo);
         nta_influx_global_cleanup();
@@ -578,11 +623,12 @@ int main(int argc, char *argv[]) {
     /* Restaura máscara na main pra receber SIGINT/SIGTERM. */
     pthread_sigmask(SIG_SETMASK, &prev_set, NULL);
 
-    fprintf(stderr, "▶ %d traffic + %d metrics + %d narrator + %d scaler — '%s' → InfluxDB%s%s (Ctrl+C p/ parar)\n",
+    fprintf(stderr, "▶ %d traffic + %d metrics + %d narrator + %d scaler — '%s' → InfluxDB%s%s%s (Ctrl+C p/ parar)\n",
             pool_size_cb(&pool), metrics_ok ? 1 : 0, narrator_ok ? 1 : 0,
             scaler_ok ? 1 : 0, cfg.queue_name,
-            geo ? " (+GeoIP)" : "",
-            ioc ? " (+IoC)" : "");
+            geo   ? " (+GeoIP)" : "",
+            ioc   ? " (+IoC)"   : "",
+            abuse ? " (+Abuse)" : "");
 
     /* Espera todos terminarem ao receber stop global. */
     pool_join_all(&pool);
@@ -591,6 +637,7 @@ int main(int argc, char *argv[]) {
     if (scaler_ok)   pthread_join(scaler_tid,   NULL);
 
     pool_destroy(&pool);
+    nta_abuse_close(abuse);
     nta_ioc_close(ioc);
     nta_geo_close(geo);
     nta_influx_global_cleanup();
