@@ -1,14 +1,14 @@
 # Network Traffic Analyzer
 
 ![Status](https://img.shields.io/badge/Status-Development-orange?style=for-the-badge)
-![Version](https://img.shields.io/badge/Version-7.0--rc-blueviolet?style=for-the-badge)
+![Version](https://img.shields.io/badge/Version-8.0-blueviolet?style=for-the-badge)
 ![Language](https://img.shields.io/badge/Language-C11-blue?style=for-the-badge&logo=c&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-lightgrey?style=for-the-badge)
 ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-Messaging-FF6600?style=for-the-badge&logo=rabbitmq&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Infrastructure-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
-> **Versão atual: v7.0** — nta-server em C, narrator C (Groq), pool adaptativo via RabbitMQ Mgmt API, retention 7d hot + 90d warm downsampled e mTLS multi-agente (SASL EXTERNAL).
+> **Versão atual: v8.0** — Threat Intelligence em C: GeoLite2-City+ASN, framework IoC (blocklist.json), AbuseIPDB enricher (libcurl+cache 24h) com dual-trigger narrator (kc_score OR abuse_score) e WHOIS nativo (TCP socket :43, sem libs externas) enriquecendo prompt LLM.
 
 O **Network Traffic Analyzer** é um sistema de monitoramento e detecção de intrusão (IDS) de alta performance desenvolvido em C (C11), com arquitetura inspirada no modelo **Agent/Server do Zabbix**.
 
@@ -693,7 +693,7 @@ O workflow `.github/workflows/test-ids.yml` executa a cada push/PR:
 | v5.1 | Validação Windows (Npcap + multi-thread) | Planejado |
 | v6.0 | AI Narrator (LLM via Groq) | ✅ migrado para C em v7.0 |
 | v7.0 | nta-server em C + narrator C (Groq) + pool adaptativo (Mgmt API) + retention 7d/90d + mTLS multi-agente | ✅ feature-complete · cluster RabbitMQ deferido p/ v10.0 |
-| v8.0 | Threat Intelligence (GeoIP + AbuseIPDB + IoC matching) | Planejado |
+| v8.0 | Threat Intelligence (GeoLite2-City+ASN, IoC framework, AbuseIPDB + dual-trigger narrator, WHOIS nativo) | ✅ feature-complete |
 | v9.0 | Alta Performance (AF_PACKET + TPACKET_V3 + zero-copy) | Planejado |
 | v10.0 | Produção: VPS + Terraform + Nginx + Let's Encrypt (deploy final) | Planejado |
 

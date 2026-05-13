@@ -5,12 +5,14 @@ Evolução do projeto desde um sniffer básico até um **IDS comportamental com 
 ```
 v1.0    v2.0      v3.0         v4.0       v5.0       v5.5         v6.0           v7.0           v8.0          v9.0       v10.0
 Captura→Mensageria→Agent/Server→IDS Engine→Multi-Thr→DX+LLM-Tools→AI Narrator(C)→nta-server→Threat Intel→Alta Perf→Prod + IaC
-  ✅      ✅         ✅            ✅         ✅         ✅           PARCIAL(Py)    PARCIAL       PLANEJADO    PLANEJADO  PLANEJADO
+  ✅      ✅         ✅            ✅         ✅         ✅           PARCIAL(Py)    ✅            ✅           PLANEJADO  PLANEJADO
 ```
 
 > **Nota de ordem (revisão 2026-04):** o deploy em VPS foi movido para o **final** do roadmap (v10.0). Motivo: evitar pagar VPS + domínio durante o desenvolvimento das features (v6.0 → v9.0). A infra de produção entra só quando o stack estiver completo e estável localmente.
 >
 > **Nota de revisão 2026-05:** v6.0 implementado em **Python** (não em C como originalmente planejado). Decisão: priorizar tempo-de-feature; reescrita em C fica para v7.0 quando o `nta-server` for o único consumidor da fila. v5.5 inserida como camada de DX e ferramentas LLM auxiliares.
+>
+> **Nota de revisão 2026-05-12:** v7.0 entregue (commit `6aa9b97`). v8.0 (Threat Intelligence) entregue em 4 milestones: GeoLite2-ASN, IoC framework, AbuseIPDB enricher + dual-trigger narrator, WHOIS nativo. M2 (cache TTL genérico) skip — cada módulo inline a própria hashtable, refactor pra módulo comum só se M de v9+ exigir.
 
 ---
 
@@ -337,15 +339,56 @@ Binário C que substitui o ingestor Python. Responsável por:
 
 ---
 
-### v8.0 — Threat Intelligence
+### v8.0 — Threat Intelligence ✅
 
-> **Enriquecer eventos com contexto externo em C.** Transformar IPs em informação acionável.
+> **Status (2026-05-12):** entregue. 4 milestones (M1/M3/M4/M5). M2 (cache TTL genérico) skip — cada enricher inline a própria hashtable.
 
-* MaxMind GeoIP2 via libmaxminddb para geolocalização offline (cidade + ASN) — ~1µs por lookup
-* AbuseIPDB API via libcurl + cJSON: reputação de IPs (score de abuso, reports anteriores)
-* Cache em memória (hashtable C) com TTL de 24h para evitar chamadas repetidas
-* WHOIS lookup via socket TCP na porta 43 — implementação nativa em C
-* Intel framework: lista de IoCs (IPs, hashes, domínios) carregada de arquivo. Alerta automático quando um IoC aparece no tráfego
+**M1 — GeoLite2-ASN ✅** (commit `8b29c12`)
+
+* Extensão de `nta_geoip.c`: abre 2 bancos opcionais (City + ASN), cache unificado serve ambos com 1 lookup
+* Tags novas no measurement `traffic`: `asn` (`AS<num>`), `asn_org` (`GOOGLE`, `OVH`, etc)
+* Env: `GEOIP_ASN_DB_PATH` (default `./GeoLite2-ASN.mmdb`)
+* Doc: `data/GeoLite2-ASN.mmdb.README.md`
+
+**M3 — IoC framework ✅** (commit `8b29c12`)
+
+* `src/server/nta_ioc.{c,h}` — carrega `deploy/ioc/blocklist.json` no startup
+* Hashtable chained O(1) por IP, schema multi-list (cada feed tem nome próprio)
+* Match contra `src_ip` emite tags `ioc_hit=1` + `ioc_source=<lista>`
+* Read-only após load — workers consultam sem mutex
+* Reload SIGHUP deferido (não no escopo M3)
+* Env: `IOC_PATH` (default `./deploy/ioc/blocklist.json`)
+* Limitação conhecida: só `src_ip`. Domínio/hash quando analyzer emitir esses campos no evento JSON
+
+**M4 — AbuseIPDB + dual-trigger narrator ✅** (commit `7e37e23`)
+
+* `src/server/nta_abuse.{c,h}` — libcurl GET `api.abuseipdb.com/v2/check?ipAddress=...&maxAgeInDays=90`
+* Header `Key: $ABUSEIPDB_API_KEY` carregada de `deploy/secrets/abuseipdb.env` (mirror groq.env, gitignored)
+* Cache 24h positivo / 5min negativo — preserva rate limit free tier (1000/dia)
+* Field novo no `traffic`: `abuse_score` (0-100, int)
+* **Republish narrator dual-trigger**: dispara quando `kc_score >= NARRATOR_MIN_SCORE` **OR** `abuse_score >= ABUSEIPDB_MIN_REPUBLISH_SCORE` (default 75). Log identifica `trigger=kc` ou `trigger=abuse`
+* Lookup serializado por mutex interno — rate-limit torna concorrência irrelevante; cache hits instantâneos
+
+**M5 — WHOIS nativo ✅** (commit `b2a2f3b`)
+
+* `src/server/nta_whois.{c,h}` — TCP socket port 43, **sem libs externas** (BSD sockets puros)
+* Fluxo: query `whois.iana.org` → parse `refer:` → query servidor regional (ARIN/RIPE/APNIC/LACNIC/AFRINIC)
+* Parser case-insensitive cobre keys de todos os RIRs: `OrgName | owner | descr | organisation`, `Country | country`, `NetName | netname`
+* Cache 24h positivo / 5min negativo, mutex interno; I/O TCP fora do lock
+* **Enriquece prompt narrator**: prepend `Origem (WHOIS): <org> (<country>) — netname: <net>` no user message antes do POST Groq
+* Não emitido como tag InfluxDB (dados RIR podem ser PII/regulados)
+* Toggle: `WHOIS_ENABLED=0` desabilita. Default on (sem key necessária)
+* Env: `WHOIS_TIMEOUT` (5s), `WHOIS_TTL` (86400s)
+
+**Cobertura threat intel resultante:**
+
+| Sinal externo                | Fonte                  | Onde aparece                      |
+|------------------------------|------------------------|-----------------------------------|
+| Geolocalização (lat/lon)     | GeoLite2-City (mmdb)   | fields `lat`/`lon` em traffic     |
+| Atribuição AS                | GeoLite2-ASN (mmdb)    | tags `asn`/`asn_org` em traffic   |
+| Reputação (abuso confirmado) | AbuseIPDB cloud API    | field `abuse_score` em traffic    |
+| IoC match (feeds)            | arquivo JSON local     | tags `ioc_hit`/`ioc_source`       |
+| Atribuição WHOIS             | TCP whois servers      | prompt LLM (narrativa)            |
 
 ---
 
