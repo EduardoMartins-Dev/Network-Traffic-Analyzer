@@ -4,11 +4,66 @@
 #include <netinet/ip_icmp.h>
 #include <arpa/inet.h>
 #include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdint.h>
 #include <math.h>
 #include <time.h>
 #include "../include/analyzer.h"
 #include "../include/publisher.h"
 #include "../include/collector.h"
+
+/* ========================================================================= *
+ * HOME_NET — CIDRs ignorados no IP layer (não no ARP).                      *
+ * Armazenamos addr/mask em network byte order — comparação direta com      *
+ * ip_header->ip_src.s_addr (também network byte order) sem swap.            *
+ * ========================================================================= */
+#define MAX_HOME_CIDR 8
+typedef struct { uint32_t addr_be; uint32_t mask_be; char str[20]; } HomeCidr;
+static HomeCidr g_home_cidrs[MAX_HOME_CIDR];
+static int      g_home_cidr_count = 0;
+
+int analyzer_add_home_cidr(const char *cidr) {
+    if (!cidr || !*cidr) return -1;
+    if (g_home_cidr_count >= MAX_HOME_CIDR) return -1;
+
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%s", cidr);
+    char *slash = strchr(buf, '/');
+    int prefix = 32;
+    if (slash) { *slash = '\0'; prefix = atoi(slash + 1); }
+    if (prefix < 0 || prefix > 32) return -1;
+
+    struct in_addr a;
+    if (inet_pton(AF_INET, buf, &a) != 1) return -1;
+
+    uint32_t mask_host = (prefix == 0) ? 0u : (0xFFFFFFFFu << (32 - prefix));
+    uint32_t mask_be   = htonl(mask_host);
+    uint32_t addr_be   = a.s_addr & mask_be;
+
+    HomeCidr *hc = &g_home_cidrs[g_home_cidr_count++];
+    hc->addr_be = addr_be;
+    hc->mask_be = mask_be;
+    snprintf(hc->str, sizeof(hc->str), "%s", cidr);
+    return 0;
+}
+
+void analyzer_home_dump(void) {
+    fprintf(stderr, "[ANALYZER] HOME_NET (%d):", g_home_cidr_count);
+    for (int i = 0; i < g_home_cidr_count; i++) {
+        fprintf(stderr, " %s", g_home_cidrs[i].str);
+    }
+    fprintf(stderr, "\n");
+}
+
+int analyzer_home_count(void) { return g_home_cidr_count; }
+
+static inline int is_home_ip(uint32_t src_be) {
+    for (int i = 0; i < g_home_cidr_count; i++) {
+        if ((src_be & g_home_cidrs[i].mask_be) == g_home_cidrs[i].addr_be) return 1;
+    }
+    return 0;
+}
 
 /* ========================================================================= *
  * CONFIGURAÇÃO OPERACIONAL DO IDS                                           *
@@ -697,6 +752,11 @@ int analyze_packet(const unsigned char *packet, int length) {
     struct ip *ip_header = (struct ip *)(packet + 14);
     uint32_t   src_ip    = ip_header->ip_src.s_addr;
     int        ip_hlen   = ip_header->ip_hl << 2;
+
+    /* HOME_NET skip — promiscuous captura egress do próprio host. Sem skip,
+     * DNS queries legítimas viram DNS_TUNNEL (subdomains longos de CDN),
+     * e CDN respondendo de múltiplas portas vira PORT_SCAN. */
+    if (is_home_ip(src_ip)) return 0;
 
     Suspect *s = find_or_create_suspect(src_ip);
     if (!s) return 0;

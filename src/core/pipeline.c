@@ -17,6 +17,10 @@
 #include <string.h>
 #include <time.h>
 #include <pcap.h>
+#include <ifaddrs.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 /* ========================================================================= *
  * CONSTANTES                                                                *
@@ -80,6 +84,67 @@ static long now_ms_monotonic(void) {
 }
 
 /* ========================================================================= *
+ * HOME_NET init — env AGENT_HOME_NETS override OU auto-detect via         *
+ * getifaddrs() na interface monitorada. Sem skip, tráfego egress do host  *
+ * vira false-positive no analyzer (DNS_TUNNEL, PORT_SCAN).                  *
+ * ========================================================================= */
+static int prefix_from_mask(uint32_t mask_host) {
+    int p = 0; uint32_t m = mask_host;
+    while (m & 0x80000000u) { p++; m <<= 1; }
+    return p;
+}
+
+static int parse_csv_cidrs(const char *csv) {
+    char buf[512];
+    snprintf(buf, sizeof(buf), "%s", csv);
+    int n = 0;
+    char *save = NULL;
+    for (char *tok = strtok_r(buf, ", \t", &save); tok;
+         tok = strtok_r(NULL, ", \t", &save)) {
+        if (analyzer_add_home_cidr(tok) == 0) n++;
+    }
+    return n;
+}
+
+static int autodetect_home_nets(const char *iface) {
+    struct ifaddrs *ifap = NULL, *ifa;
+    if (getifaddrs(&ifap) != 0) return 0;
+    int n = 0;
+    for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
+        if (!ifa->ifa_netmask) continue;
+        if (strcmp(ifa->ifa_name, iface) != 0 &&
+            strcmp(ifa->ifa_name, "lo")   != 0) continue;
+
+        uint32_t addr_be = ((struct sockaddr_in *)ifa->ifa_addr)->sin_addr.s_addr;
+        uint32_t mask_be = ((struct sockaddr_in *)ifa->ifa_netmask)->sin_addr.s_addr;
+        uint32_t net_be  = addr_be & mask_be;
+        int prefix = prefix_from_mask(ntohl(mask_be));
+
+        char ip_str[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &net_be, ip_str, sizeof(ip_str));
+        char cidr[32];
+        snprintf(cidr, sizeof(cidr), "%s/%d", ip_str, prefix);
+        if (analyzer_add_home_cidr(cidr) == 0) n++;
+    }
+    freeifaddrs(ifap);
+    return n;
+}
+
+static void init_home_nets(const char *iface) {
+    const char *env = getenv("AGENT_HOME_NETS");
+    if (env && *env) {
+        int n = parse_csv_cidrs(env);
+        fprintf(stderr, "[PIPE] HOME_NET via AGENT_HOME_NETS: %d CIDR(s)\n", n);
+    } else {
+        int n = autodetect_home_nets(iface);
+        fprintf(stderr, "[PIPE] HOME_NET auto-detect em '%s': %d CIDR(s)\n",
+                iface, n);
+    }
+    analyzer_home_dump();
+}
+
+/* ========================================================================= *
  * THREAD 1 — CAPTURA                                                        *
  *                                                                           *
  * Abre a interface em modo promíscuo, eleva prioridade para SCHED_FIFO     *
@@ -94,6 +159,8 @@ static void *capture_thread(void *arg) {
         fprintf(stderr, "[PIPE] Aviso: nao foi possivel aplicar SCHED_FIFO "
                         "(continuando em SCHED_OTHER).\n");
     }
+
+    init_home_nets(iface);
 
     char errbuf[PCAP_ERRBUF_SIZE];
     g_pcap_handle = pcap_open_live(iface, SNAP_LEN, 1, 1000, errbuf);
