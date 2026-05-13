@@ -606,6 +606,78 @@ docker exec influxdb influx task list
 
 ---
 
+## Threat Intelligence (v8.0)
+
+O `nta-server` enriquece cada evento com **4 fontes externas**, todas opcionais e degradáveis. Cada uma com cache próprio pra não martelar APIs nem disco.
+
+| Enricher | Fonte | Schema emitido | Cache | Latência |
+|---|---|---|---|---|
+| **GeoLite2-City** | mmdb offline | fields `lat`, `lon` | 4096 buckets, sem TTL | ~1µs |
+| **GeoLite2-ASN**  | mmdb offline | tags `asn` (`AS15169`), `asn_org` (`GOOGLE`) | mesma do City | ~1µs |
+| **IoC framework** | `deploy/ioc/blocklist.json` local | tags `ioc_hit=1`, `ioc_source=<lista>` | hashtable read-only | O(1) sem rede |
+| **AbuseIPDB** | cloud API (libcurl) | field `abuse_score` (0-100) | 24h hit / 5min miss | ~200ms-2s (cold), instant (warm) |
+| **WHOIS nativo** | TCP socket :43 (BSD sockets) | prompt LLM (não tag) | 24h hit / 5min miss | ~200ms-2s |
+
+### O que o GeoIP faz
+
+**2 lookups por evento, ambos offline** (~1µs cada via libmaxminddb):
+
+1. **Skip se IP privado** (`127.`, `192.168.`, `10.`, `172.`) — sem enriquecimento.
+2. **Cache check** (FNV-1a hash) — hit retorna lat/lon/asn já materializados.
+3. **Miss**: `MMDB_lookup_string` em ambos os bancos, preenche cache.
+4. **Line protocol InfluxDB** ganha:
+   - `lat=-23.5505,lon=-46.6333` (fields, numérico)
+   - `,asn=AS15169,asn_org=GOOGLE` (tags, indexadas pra groupBy)
+
+**Casos de uso:**
+- Grafana **Geomap**: pin por IP atacante usando `lat`/`lon`
+- Grafana **table groupBy `asn_org`**: ranking de ASs mais ofensivos
+- Filtro Flux `r.asn == "AS9009"` (M247 — botnet conhecido) isolando categoria de tráfego
+- Narrator LLM cita atribuição na narrativa: "Origem em AS15169 (GOOGLE), SP/BR"
+
+**Falha graceful:** sem mmdb, banner imprime warn e o servidor segue — eventos ficam sem `lat`/`lon`/`asn` mas tudo o mais funciona.
+
+### Setup dos enrichers
+
+```bash
+# 1. GeoIP (cobre City + ASN) — download manual da MaxMind
+#    Detalhes em data/GeoLite2-*.mmdb.README.md
+ls data/GeoLite2-City.mmdb data/GeoLite2-ASN.mmdb   # ambos ~/data/
+
+# 2. IoC — cópia do example, popular com feeds reais
+cp deploy/ioc/blocklist.json.example deploy/ioc/blocklist.json
+# Editar e colar IPs do Feodo Tracker, AbuseCH, etc
+
+# 3. AbuseIPDB — conta grátis em abuseipdb.com (1000 checks/dia)
+cp deploy/secrets/abuseipdb.env.example deploy/secrets/abuseipdb.env
+# Editar e colar ABUSEIPDB_API_KEY=<sua key>
+
+# 4. WHOIS — zero setup. Default ligado.
+```
+
+Banner do `nta-server` confirma quais carregaram:
+```
+▶ ... → InfluxDB (+GeoIP) (+IoC) (+Abuse) (+WHOIS)
+```
+
+### Dual-trigger narrator (v8.0 M4)
+
+Republicação na fila `narrator_queue` agora dispara em **dois sinais**:
+
+| Trigger | Threshold env | Default |
+|---|---|---|
+| Kill chain score | `NARRATOR_MIN_SCORE` | 80 |
+| AbuseIPDB score | `ABUSEIPDB_MIN_REPUBLISH_SCORE` | 75 |
+
+Log do `nta-server` identifica qual disparou:
+```
+[NARR] republish agent=lab-01 src=185.220.101.5 kc=45 abuse=92 trigger=abuse
+```
+
+IPs com `kc_score` baixo mas reputação ruim (operadores conhecidos, e.g. Tor exit nodes ativos em scans) agora geram narrativa LLM mesmo sem completar kill chain — captura ameaças contextuais que o EWMA isolado perde.
+
+---
+
 ## Formato do Evento JSON publicado
 
 A partir da v5.0 o agente publica **lotes** (arrays) de eventos em uma única mensagem AMQP:
