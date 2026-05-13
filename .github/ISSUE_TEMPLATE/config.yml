@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🇬🇧 Security vulnerability (private)
+    url: https://github.com/EduardoMartins-Dev/Network-Traffic-Analyzer/security/advisories/new
+    about: Report a vulnerability privately — DO NOT open a public issue.
+  - name: 🇧🇷 Vulnerabilidade de segurança (privado)
+    url: https://github.com/EduardoMartins-Dev/Network-Traffic-Analyzer/security/advisories/new
+    about: Reporte vulnerabilidade em privado — NÃO abra issue público.
+  - name: 📖 Documentation (README / ROADMAP)
+    url: https://github.com/EduardoMartins-Dev/Network-Traffic-Analyzer#network-traffic-analyzer
+    about: Check the README before opening an issue.
+  - name: 💬 General questions / Perguntas gerais
+    url: https://github.com/EduardoMartins-Dev/Network-Traffic-Analyzer/discussions
+    about: Use Discussions for design ideas, questions, and brainstorming.

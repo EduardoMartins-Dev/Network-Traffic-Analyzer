@@ -1,0 +1,94 @@
+name: ✨ Feature request (English)
+description: Suggest a new feature or enhancement.
+title: "[feat] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion.
+
+        **Before submitting:**
+        - Check the [ROADMAP](https://github.com/EduardoMartins-Dev/Network-Traffic-Analyzer/blob/main/ROADMAP.MD) — your idea may already be planned or explicitly out of scope.
+        - For open-ended design discussion, prefer [Discussions](https://github.com/EduardoMartins-Dev/Network-Traffic-Analyzer/discussions) over a feature request.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What user-facing problem does this solve? Avoid jumping straight to a solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Concrete sketch of what you want. API, env var, dashboard panel, schema field, etc.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other approaches did you think about? Why is this one better?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component(s)
+      multiple: true
+      options:
+        - Agent (capture / analyzer)
+        - nta-server (consumer / influx writer)
+        - Narrator (LLM)
+        - Scaler (worker pool)
+        - GeoIP / ASN
+        - IoC framework
+        - AbuseIPDB
+        - WHOIS
+        - InfluxDB schema / line protocol
+        - RabbitMQ / AMQP
+        - Build (CMake / deps)
+        - Dashboards (Grafana)
+        - Scripts / Makefile
+        - Docs
+        - New module
+    validations:
+      required: true
+
+  - type: dropdown
+    id: roadmap
+    attributes:
+      label: Roadmap relation
+      options:
+        - Already on the roadmap (point to it in details)
+        - Extension of an existing roadmap item
+        - New, not on the roadmap
+        - Out of scope for this project (you want to discuss anyway)
+    validations:
+      required: true
+
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: Tradeoffs / costs
+      description: New deps? Schema migration? Backwards-incompatible? Performance impact?
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Sketches, prior art in other tools, links to specs/RFCs.
+
+  - type: checkboxes
+    id: willing
+    attributes:
+      label: Are you willing to implement this?
+      options:
+        - label: Yes, I will open a PR.
+        - label: Maybe, with guidance.
+        - label: No, just suggesting.

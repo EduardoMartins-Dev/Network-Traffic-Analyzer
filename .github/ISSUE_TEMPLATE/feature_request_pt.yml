@@ -1,0 +1,94 @@
+name: ✨ Feature request (Português)
+description: Sugerir nova feature ou melhoria.
+title: "[feat] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado pela sugestão.
+
+        **Antes de enviar:**
+        - Confira o [ROADMAP](https://github.com/EduardoMartins-Dev/Network-Traffic-Analyzer/blob/main/ROADMAP.MD) — pode já estar planejado ou explicitamente fora de escopo.
+        - Pra discussão de design aberta, prefira [Discussions](https://github.com/EduardoMartins-Dev/Network-Traffic-Analyzer/discussions) ao invés de feature request.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problema / motivação
+      description: Que problema visível pro usuário isso resolve? Evite pular direto pra solução.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Solução proposta
+      description: Esboço concreto do que quer. API, env var, painel Grafana, campo de schema, etc.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas consideradas
+      description: Que outras abordagens pensou? Por que essa é melhor?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Componente(s) afetado(s)
+      multiple: true
+      options:
+        - Agente (captura / analyzer)
+        - nta-server (consumer / influx writer)
+        - Narrator (LLM)
+        - Scaler (pool de workers)
+        - GeoIP / ASN
+        - Framework IoC
+        - AbuseIPDB
+        - WHOIS
+        - Schema InfluxDB / line protocol
+        - RabbitMQ / AMQP
+        - Build (CMake / deps)
+        - Dashboards (Grafana)
+        - Scripts / Makefile
+        - Docs
+        - Novo módulo
+    validations:
+      required: true
+
+  - type: dropdown
+    id: roadmap
+    attributes:
+      label: Relação com roadmap
+      options:
+        - Já no roadmap (cite onde nos detalhes)
+        - Extensão de item existente
+        - Novo, não está no roadmap
+        - Fora do escopo (quer discutir mesmo assim)
+    validations:
+      required: true
+
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: Tradeoffs / custos
+      description: Novas deps? Migração de schema? Quebra retrocompat? Impacto perf?
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Contexto adicional
+      description: Esboços, prior art em outras ferramentas, links pra specs/RFCs.
+
+  - type: checkboxes
+    id: willing
+    attributes:
+      label: Disposto a implementar?
+      options:
+        - label: Sim, vou abrir PR.
+        - label: Talvez, com orientação.
+        - label: Não, só sugerindo.

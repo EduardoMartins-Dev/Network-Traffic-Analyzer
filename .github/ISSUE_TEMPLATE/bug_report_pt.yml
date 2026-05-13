@@ -1,0 +1,106 @@
+name: 🐛 Bug report (Português)
+description: Algo está quebrado ou se comportando de forma inesperada.
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por reportar.
+
+        **Antes de enviar:**
+        - Procure em [issues existentes](https://github.com/EduardoMartins-Dev/Network-Traffic-Analyzer/issues?q=is%3Aissue) — pode já existir.
+        - Se for **vulnerabilidade de segurança**, pare e use o [fluxo de advisory privado](https://github.com/EduardoMartins-Dev/Network-Traffic-Analyzer/security/advisories/new).
+
+  - type: input
+    id: version
+    attributes:
+      label: Versão / commit
+      description: Saída de `git rev-parse --short HEAD` ou tag da release.
+      placeholder: "v8.0 (9f6fe36)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Componente afetado
+      options:
+        - Agente (captura / analyzer)
+        - nta-server (consumer / influx writer)
+        - Narrator (LLM)
+        - Scaler (pool de workers)
+        - GeoIP / ASN
+        - Framework IoC
+        - AbuseIPDB
+        - WHOIS
+        - Schema InfluxDB / line protocol
+        - RabbitMQ / AMQP
+        - Build (CMake / deps)
+        - Dashboards (Grafana)
+        - Scripts / Makefile
+        - Docs
+        - Outro
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: O que aconteceu?
+      description: Descrição concreta. Evite "não funciona" — diga o que viu vs o que esperava.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Passos para reproduzir
+      placeholder: |
+        1. `make quickstart`
+        2. Subir agente: `./build/NetworkTrafficAnalyzer -i eth0`
+        3. Rodar nmap de outro host
+        4. Olhar Grafana — sem detecção SYN_FLOOD
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Comportamento esperado
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Comportamento real (logs / output)
+      description: Cole linhas de log relevantes. Use ``` p/ blocos de código. Remova dados sensíveis.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: SO / kernel
+      placeholder: "Fedora 43 (Linux 7.0.4)"
+    validations:
+      required: true
+
+  - type: input
+    id: compiler
+    attributes:
+      label: Compilador
+      placeholder: "gcc 14.3.0"
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checagens pré-envio
+      options:
+        - label: Pesquisei em issues existentes.
+          required: true
+        - label: NÃO estou reportando vulnerabilidade de segurança (essas vão pra advisory privado).
+          required: true
+        - label: Testei no `main` mais recente.

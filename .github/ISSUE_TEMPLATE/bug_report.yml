@@ -1,0 +1,106 @@
+name: 🐛 Bug report (English)
+description: Something is broken or behaving unexpectedly.
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report.
+
+        **Before submitting:**
+        - Search [existing issues](https://github.com/EduardoMartins-Dev/Network-Traffic-Analyzer/issues?q=is%3Aissue) — yours may already exist.
+        - If this is a **security vulnerability**, stop and use the [private advisory flow](https://github.com/EduardoMartins-Dev/Network-Traffic-Analyzer/security/advisories/new) instead.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Output of `git rev-parse --short HEAD` or the release tag.
+      placeholder: "v8.0 (9f6fe36)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      options:
+        - Agent (capture / analyzer)
+        - nta-server (consumer / influx writer)
+        - Narrator (LLM)
+        - Scaler (worker pool)
+        - GeoIP / ASN
+        - IoC framework
+        - AbuseIPDB
+        - WHOIS
+        - InfluxDB schema / line protocol
+        - RabbitMQ / AMQP
+        - Build (CMake / deps)
+        - Dashboards (Grafana)
+        - Scripts / Makefile
+        - Docs
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear, concrete description. Avoid "it doesn't work" — say what you saw vs what you expected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. `make quickstart`
+        2. Start agent: `./build/NetworkTrafficAnalyzer -i eth0`
+        3. Run nmap from another host
+        4. Check Grafana — no SYN_FLOOD detection
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior (logs / output)
+      description: Paste relevant log lines. Use ``` for code blocks. Trim sensitive data.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS / kernel
+      placeholder: "Fedora 43 (Linux 7.0.4)"
+    validations:
+      required: true
+
+  - type: input
+    id: compiler
+    attributes:
+      label: Compiler
+      placeholder: "gcc 14.3.0"
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: I am NOT reporting a security vulnerability (those go to private advisories).
+          required: true
+        - label: I tested on the latest `main`.
