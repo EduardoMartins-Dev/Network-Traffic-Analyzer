@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "_doc": "Cópia este arquivo para blocklist.json e popule com feeds reais. Schema é multi-list: cada item de 'lists' tem nome + array de IPs. nta-server carrega no startup e adiciona tags ioc_hit=1 + ioc_source=<nome> em eventos cujo src_ip aparece em qualquer lista.",
+  "lists": [
+    {
+      "name": "feodo-c2",
+      "url": "https://feodotracker.abuse.ch/downloads/ipblocklist.json",
+      "updated": "2026-05-12T00:00:00Z",
+      "ips": [
+        "192.0.2.10",
+        "192.0.2.11",
+        "198.51.100.42"
+      ]
+    },
+    {
+      "name": "manual-test",
+      "url": null,
+      "updated": "2026-05-12T00:00:00Z",
+      "ips": [
+        "203.0.113.99"
+      ]
+    }
+  ]
+}

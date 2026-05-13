@@ -21,6 +21,9 @@ traffic_log.txt
 # GeoLite2 (binário proprietário da MaxMind — download manual, ver data/*.README.md)
 /data/*.mmdb
 
+# IoC blocklist real — manter só o .example versionado (v8.0 M3)
+/deploy/ioc/blocklist.json
+
 # Python bytecode cache
 __pycache__/
 *.pyc

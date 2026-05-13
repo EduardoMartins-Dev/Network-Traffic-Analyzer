@@ -23,6 +23,7 @@
 #include "../../include/nta_consumer.h"
 #include "../../include/nta_influx.h"
 #include "../../include/nta_geoip.h"
+#include "../../include/nta_ioc.h"
 #include "../../include/nta_narrator.h"
 #include "../../include/nta_scaler.h"
 #include "../../include/cJSON.h"
@@ -66,7 +67,10 @@ void nta_config_load(NtaConfig *cfg) {
 
     cfg->narrator_min_score = env_int("NARRATOR_MIN_SCORE", 80);
 
-    cfg->geoip_db_path = env_or("GEOIP_DB_PATH", "./GeoLite2-City.mmdb");
+    cfg->geoip_db_path     = env_or("GEOIP_DB_PATH",     "./GeoLite2-City.mmdb");
+    cfg->geoip_asn_db_path = env_or("GEOIP_ASN_DB_PATH", "./GeoLite2-ASN.mmdb");
+
+    cfg->ioc_path = env_or("IOC_PATH", "./deploy/ioc/blocklist.json");
 
     cfg->num_workers = env_int("NTA_WORKERS", 4);
     if (cfg->num_workers < 1) cfg->num_workers = 1;
@@ -90,13 +94,15 @@ void nta_config_print(const NtaConfig *cfg) {
         "    RabbitMQ  host=%s port=%d user=%s vhost=%s\n"
         "    Queues    traffic=%s metrics=%s narrator=%s\n"
         "    Narrator  min_score=%d\n"
-        "    GeoIP     db=%s\n"
+        "    GeoIP     city=%s asn=%s\n"
+        "    IoC       path=%s\n"
         "    Workers   %d\n",
         cfg->influx_url, cfg->influx_org, cfg->influx_bucket, tok_masked,
         cfg->rabbit_host, cfg->rabbit_port, cfg->rabbit_user, cfg->rabbit_vhost,
         cfg->queue_name, cfg->metrics_queue, cfg->narrator_queue,
         cfg->narrator_min_score,
-        cfg->geoip_db_path,
+        cfg->geoip_db_path, cfg->geoip_asn_db_path,
+        cfg->ioc_path,
         cfg->num_workers);
 }
 
@@ -119,6 +125,7 @@ static void on_signal(int sig) {
 typedef struct {
     NtaInflux  *inf;
     NtaGeo     *geo;            /* shared, pode ser NULL */
+    NtaIoc     *ioc;            /* shared, pode ser NULL (v8.0 M3) */
     NtaAmqp    *amqp;           /* per-worker, mesmo do consumer */
     const char *narrator_queue;
     int         min_score;      /* 0 desabilita republish */
@@ -146,7 +153,8 @@ static void republish_if_high(TrafficCtx *ctx, const cJSON *evt,
 static void traffic_handler(const char *body, size_t len,
                             const char *agent_id, void *user_ctx) {
     TrafficCtx *ctx = (TrafficCtx *)user_ctx;
-    if (nta_influx_write_traffic(ctx->inf, ctx->geo, body, len, agent_id) != 0) {
+    if (nta_influx_write_traffic(ctx->inf, ctx->geo, ctx->ioc,
+                                  body, len, agent_id) != 0) {
         fprintf(stderr, "[MSG] descarte agent=%s len=%zu (escrita falhou)\n",
                 agent_id, len);
         return;
@@ -210,6 +218,7 @@ typedef struct {
     int             worker_id;
     const NtaConfig *cfg;
     NtaGeo         *geo;       /* shared */
+    NtaIoc         *ioc;       /* shared (v8.0 M3) */
     NtaAmqp         amqp;      /* per-worker */
     NtaInflux       influx;    /* per-worker */
     const NtaNarratorCfg *ncfg;  /* só pro narrator worker */
@@ -249,6 +258,7 @@ static void *worker_main(void *arg) {
     TrafficCtx ctx = {
         .inf            = &w->influx,
         .geo            = w->geo,
+        .ioc            = w->ioc,
         .amqp           = &w->amqp,
         .narrator_queue = w->cfg->narrator_queue,
         .min_score      = can_narrate ? w->cfg->narrator_min_score : 0,
@@ -342,10 +352,12 @@ typedef struct {
     pthread_mutex_t mu;
     const NtaConfig *cfg;
     NtaGeo         *geo;
+    NtaIoc         *ioc;         /* shared (v8.0 M3) */
     int             next_id;     /* contador monotônico p/ worker_id */
 } TrafficPool;
 
-static int pool_init(TrafficPool *p, const NtaConfig *cfg, NtaGeo *geo, int max) {
+static int pool_init(TrafficPool *p, const NtaConfig *cfg, NtaGeo *geo,
+                     NtaIoc *ioc, int max) {
     memset(p, 0, sizeof(*p));
     p->slots  = calloc((size_t)max, sizeof(Worker));
     p->tids   = calloc((size_t)max, sizeof(pthread_t));
@@ -354,6 +366,7 @@ static int pool_init(TrafficPool *p, const NtaConfig *cfg, NtaGeo *geo, int max)
     p->max = max;
     p->cfg = cfg;
     p->geo = geo;
+    p->ioc = ioc;
     pthread_mutex_init(&p->mu, NULL);
     return 0;
 }
@@ -369,6 +382,7 @@ static int pool_spawn_one_locked(TrafficPool *p) {
     w->worker_id = p->next_id++;
     w->cfg       = p->cfg;
     w->geo       = p->geo;
+    w->ioc       = p->ioc;
     atomic_init(&w->stop, 0);
     if (pthread_create(&p->tids[idx], NULL, worker_main, w) != 0) {
         fprintf(stderr, "[POOL] pthread_create slot=%d falhou\n", idx);
@@ -474,11 +488,17 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    NtaGeo *geo = nta_geo_open(cfg.geoip_db_path);
+    NtaGeo *geo = nta_geo_open(cfg.geoip_db_path, cfg.geoip_asn_db_path);
     if (!geo) {
-        fprintf(stderr, "⚠ GeoIP indisponível (db=%s) — eventos sem lat/lon. "
-                "Veja data/GeoLite2-City.mmdb.README.md\n",
-                cfg.geoip_db_path);
+        fprintf(stderr, "⚠ GeoIP indisponível (city=%s asn=%s) — eventos "
+                "sem lat/lon/asn. Veja data/GeoLite2-*.mmdb.README.md\n",
+                cfg.geoip_db_path, cfg.geoip_asn_db_path);
+    }
+
+    NtaIoc *ioc = nta_ioc_load(cfg.ioc_path);
+    if (!ioc) {
+        fprintf(stderr, "⚠ IoC desabilitado (path=%s) — sem tags ioc_hit. "
+                "Veja deploy/ioc/blocklist.json.example\n", cfg.ioc_path);
     }
 
     /* Narrator config — repo_root = cwd (assume script up.sh ou make rodando
@@ -498,8 +518,9 @@ int main(int argc, char *argv[]) {
     if (pool_max < cfg.num_workers) pool_max = cfg.num_workers;
 
     TrafficPool pool;
-    if (pool_init(&pool, &cfg, geo, pool_max) != 0) {
+    if (pool_init(&pool, &cfg, geo, ioc, pool_max) != 0) {
         fprintf(stderr, "✗ pool_init falhou\n");
+        nta_ioc_close(ioc);
         nta_geo_close(geo);
         nta_influx_global_cleanup();
         return 1;
@@ -557,9 +578,11 @@ int main(int argc, char *argv[]) {
     /* Restaura máscara na main pra receber SIGINT/SIGTERM. */
     pthread_sigmask(SIG_SETMASK, &prev_set, NULL);
 
-    fprintf(stderr, "▶ %d traffic + %d metrics + %d narrator + %d scaler — '%s' → InfluxDB%s (Ctrl+C p/ parar)\n",
+    fprintf(stderr, "▶ %d traffic + %d metrics + %d narrator + %d scaler — '%s' → InfluxDB%s%s (Ctrl+C p/ parar)\n",
             pool_size_cb(&pool), metrics_ok ? 1 : 0, narrator_ok ? 1 : 0,
-            scaler_ok ? 1 : 0, cfg.queue_name, geo ? " (+GeoIP)" : "");
+            scaler_ok ? 1 : 0, cfg.queue_name,
+            geo ? " (+GeoIP)" : "",
+            ioc ? " (+IoC)" : "");
 
     /* Espera todos terminarem ao receber stop global. */
     pool_join_all(&pool);
@@ -568,6 +591,7 @@ int main(int argc, char *argv[]) {
     if (scaler_ok)   pthread_join(scaler_tid,   NULL);
 
     pool_destroy(&pool);
+    nta_ioc_close(ioc);
     nta_geo_close(geo);
     nta_influx_global_cleanup();
 

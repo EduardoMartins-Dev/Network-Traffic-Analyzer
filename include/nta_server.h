@@ -29,7 +29,11 @@ typedef struct {
     int narrator_min_score;
 
     /* GeoIP */
-    const char *geoip_db_path;
+    const char *geoip_db_path;       /* GeoLite2-City.mmdb */
+    const char *geoip_asn_db_path;   /* GeoLite2-ASN.mmdb  (v8.0 M1) */
+
+    /* IoC framework (v8.0 M3) */
+    const char *ioc_path;            /* JSON com listas de IPs maliciosos */
 
     /* Pool */
     int num_workers;

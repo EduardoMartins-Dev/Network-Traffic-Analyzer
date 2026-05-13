@@ -5,6 +5,7 @@
 #include <curl/curl.h>
 #include "nta_server.h"
 #include "nta_geoip.h"
+#include "nta_ioc.h"
 
 /* Cliente InfluxDB v2 por worker. libcurl mantém keepalive da conexão HTTP. */
 typedef struct {
@@ -22,10 +23,11 @@ void nta_influx_global_cleanup(void);
 int  nta_influx_open(NtaInflux *inf, const NtaConfig *cfg);
 
 /* Parse JSON (array ou objeto) em `body` e escreve como measurement
- * "traffic" no bucket. `agent_id` vira tag. Se `geo` != NULL, faz lookup
- * do src_ip e adiciona fields lat/lon quando IP é público + encontrado.
+ * "traffic" no bucket. `agent_id` vira tag.
+ *  - Se `geo` != NULL: lookup src_ip → fields lat/lon + tags asn/asn_org.
+ *  - Se `ioc` != NULL: lookup src_ip → tags ioc_hit + ioc_source.
  * Retorna 0 em sucesso. */
-int  nta_influx_write_traffic(NtaInflux *inf, NtaGeo *geo,
+int  nta_influx_write_traffic(NtaInflux *inf, NtaGeo *geo, NtaIoc *ioc,
                               const char *body, size_t len,
                               const char *agent_id);
 

@@ -93,7 +93,7 @@ static bool json_get_num(const cJSON *obj, const char *key, double *out) {
  * -------------------------------------------------------------------------- */
 static int build_traffic_point(char *out, size_t cap,
                                const cJSON *evt, const char *agent_id,
-                               NtaGeo *geo) {
+                               NtaGeo *geo, NtaIoc *ioc) {
     if (cap < 64) return 0;
 
     char esc_agent[MAX_TAG_LEN];
@@ -102,14 +102,24 @@ static int build_traffic_point(char *out, size_t cap,
     char esc_attack[MAX_TAG_LEN];
     char esc_stage[MAX_TAG_LEN];
     char esc_mitre[MAX_TAG_LEN];
+    char esc_asn[MAX_TAG_LEN];
+    char esc_asn_org[MAX_TAG_LEN];
+    char esc_ioc_src[MAX_TAG_LEN];
+
+    const char *src_ip = json_get_str(evt, "src_ip", "0.0.0.0");
 
     lp_escape(esc_agent, sizeof(esc_agent), agent_id ? agent_id : "unknown");
-    lp_escape(esc_ip,    sizeof(esc_ip),    json_get_str(evt, "src_ip", "0.0.0.0"));
+    lp_escape(esc_ip,    sizeof(esc_ip),    src_ip);
     lp_escape(esc_proto, sizeof(esc_proto), json_get_str(evt, "proto",  "UNKNOWN"));
 
     const char *attack = json_get_str(evt, "attack_type",      NULL);
     const char *stage  = json_get_str(evt, "kill_chain_stage", NULL);
     const char *mitre  = json_get_str(evt, "mitre",            NULL);
+
+    /* GeoIP lookup único: cobre city (lat/lon → fields) + ASN (asn/asn_org →
+     * tags). 1 hit no cache serve os dois. Skip se geo é NULL ou IP privado. */
+    NtaGeoResult gr = {0};
+    if (geo) nta_geo_lookup(geo, src_ip, &gr);
 
     /* Fields */
     double port_d = 0, bytes_d = 0, is_scan_d = 0;
@@ -147,6 +157,37 @@ static int build_traffic_point(char *out, size_t cap,
         w += n;
     }
 
+    /* IoC match — v8.0 M3. Tag ioc_hit (cardinality=1) + ioc_source (lista que
+     * cassou). Lookup O(1). Skip se ioc é NULL. */
+    if (ioc) {
+        const char *src = nta_ioc_match_ip(ioc, src_ip);
+        if (src) {
+            lp_escape(esc_ioc_src, sizeof(esc_ioc_src), src);
+            n = snprintf(out + w, cap - w, ",ioc_hit=1,ioc_source=%s",
+                         esc_ioc_src);
+            if (n <= 0 || (size_t)n >= cap - w) return 0;
+            w += n;
+        }
+    }
+
+    /* ASN tags — v8.0 M1. Cardinalidade baixa (~100s típico). asn como string
+     * "AS<num>" pra evitar query Flux com cast de número→string em filtros. */
+    if (gr.has_asn) {
+        char asn_str[16];
+        snprintf(asn_str, sizeof(asn_str), "AS%u", gr.asn_number);
+        lp_escape(esc_asn, sizeof(esc_asn), asn_str);
+        n = snprintf(out + w, cap - w, ",asn=%s", esc_asn);
+        if (n <= 0 || (size_t)n >= cap - w) return 0;
+        w += n;
+
+        if (gr.asn_org[0]) {
+            lp_escape(esc_asn_org, sizeof(esc_asn_org), gr.asn_org);
+            n = snprintf(out + w, cap - w, ",asn_org=%s", esc_asn_org);
+            if (n <= 0 || (size_t)n >= cap - w) return 0;
+            w += n;
+        }
+    }
+
     n = snprintf(out + w, cap - w,
         " port=%lldi,bytes=%.6g,is_scan=%.6g",
         (long long)port_d, bytes_d, is_scan_d);
@@ -159,16 +200,12 @@ static int build_traffic_point(char *out, size_t cap,
         w += n;
     }
 
-    /* GeoIP — só se o banco está aberto e o IP é público + encontrado.
-     * Mesma semântica do data_ingestor.py: lat/lon como fields, não tags. */
-    if (geo) {
-        double lat = 0, lon = 0;
-        const char *src_ip = json_get_str(evt, "src_ip", NULL);
-        if (src_ip && nta_geo_lookup(geo, src_ip, &lat, &lon)) {
-            n = snprintf(out + w, cap - w, ",lat=%.6f,lon=%.6f", lat, lon);
-            if (n <= 0 || (size_t)n >= cap - w) return 0;
-            w += n;
-        }
+    /* lat/lon — fields (não tags), paridade com data_ingestor.py. Reusa o
+     * lookup já feito acima (gr). */
+    if (gr.has_geo) {
+        n = snprintf(out + w, cap - w, ",lat=%.6f,lon=%.6f", gr.lat, gr.lon);
+        if (n <= 0 || (size_t)n >= cap - w) return 0;
+        w += n;
     }
 
     n = snprintf(out + w, cap - w, "\n");
@@ -249,7 +286,7 @@ static int influx_post(NtaInflux *inf, const char *body, size_t len) {
     return 0;
 }
 
-int nta_influx_write_traffic(NtaInflux *inf, NtaGeo *geo,
+int nta_influx_write_traffic(NtaInflux *inf, NtaGeo *geo, NtaIoc *ioc,
                              const char *body, size_t len,
                              const char *agent_id) {
     if (!inf->ready || !body || len == 0) return -1;
@@ -270,11 +307,11 @@ int nta_influx_write_traffic(NtaInflux *inf, NtaGeo *geo,
         cJSON_ArrayForEach(item, root) {
             if (!cJSON_IsObject(item)) continue;
             int w = build_traffic_point(lp + lp_len, sizeof(lp) - lp_len,
-                                         item, agent_id, geo);
+                                         item, agent_id, geo, ioc);
             if (w > 0) { lp_len += w; n_events++; }
         }
     } else if (cJSON_IsObject(root)) {
-        int w = build_traffic_point(lp, sizeof(lp), root, agent_id, geo);
+        int w = build_traffic_point(lp, sizeof(lp), root, agent_id, geo, ioc);
         if (w > 0) { lp_len = w; n_events = 1; }
     }
 

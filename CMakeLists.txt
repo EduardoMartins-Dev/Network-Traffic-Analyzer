@@ -80,6 +80,7 @@ if(NOT WIN32)
             src/server/nta_consumer.c
             src/server/nta_influx.c
             src/server/nta_geoip.c
+            src/server/nta_ioc.c
             src/server/nta_narrator.c
             src/server/nta_scaler.c
             src/output/cJSON.c
