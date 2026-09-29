@@ -7,6 +7,7 @@
 deploy/rabbitmq/* text eol=lf
 grafana/**/*.yaml text eol=lf
 docker-compose.yml text eol=lf
+*.Dockerfile      text eol=lf
 
 *.pcap            binary
 *.mmdb            binary

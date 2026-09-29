@@ -47,3 +47,22 @@ jobs:
           name: ids-test-report
           path: tests/report.json
           if-no-files-found: ignore
+
+  server-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build nta-server image
+        run: docker build -f deploy/nta-server.Dockerfile -t nta-server:ci .
+
+      - name: Smoke — sobe sem broker e reporta degraded (503)
+        run: |
+          docker run -d --name nta nta-server:ci
+          for i in $(seq 1 20); do
+            code=$(docker exec nta curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9091/health || true)
+            [ "$code" = 503 ] && { echo "health 503 (esperado sem broker)"; exit 0; }
+            sleep 1
+          done
+          docker logs nta; exit 1

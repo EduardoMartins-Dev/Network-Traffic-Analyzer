@@ -1,0 +1,6 @@
+# Build context mínimo: só o necessário pra compilar o nta-server.
+# (evita mandar volumes de dados — rabbitmq_data, influxdb_data... — e segredos)
+*
+!CMakeLists.txt
+!include/
+!src/

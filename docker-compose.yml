@@ -1,9 +1,14 @@
 version: '3.8'
 
+# Credenciais vêm do .env (ver .env.example). Os defaults abaixo são só pra
+# desenvolvimento — troque antes de expor qualquer porta fora do host.
+# Obs.: RabbitMQ e InfluxDB só aplicam usuário/senha/token na PRIMEIRA
+# inicialização (volume vazio); depois disso, mude pelos próprios serviços.
+
 services:
   # RABBITMQ
   rabbitmq:
-    image: rabbitmq:3-management
+    image: rabbitmq:3.13-management
     container_name: rabbitmq
     hostname: rabbitmq
     restart: always
@@ -12,8 +17,9 @@ services:
       - "5671:5671"   # AMQP TLS (mTLS multi-agente — v7.0)
       - "15673:15672" # Painel Web do RabbitMQ
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
+      # Não usar `guest`: ele só loga de localhost e o nta-server vem de outro container.
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-nta}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-nta-dev-password}
     volumes:
       - ./rabbitmq_data:/var/lib/rabbitmq
       - ./deploy/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro,z
@@ -30,29 +36,57 @@ services:
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=adminpassword123
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUX_PASSWORD:-adminpassword123}
       - DOCKER_INFLUXDB_INIT_ORG=cybersecurity
       - DOCKER_INFLUXDB_INIT_BUCKET=network_traffic
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=my-super-secret-auth-token
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUX_TOKEN:-my-super-secret-auth-token}
     volumes:
       - ./influxdb_data:/var/lib/influxdb2 # Salva os dados dos pacotes
       - ./influxdb_config:/etc/influxdb2 # Salva as configurações do bucket
 
+  # NTA-SERVER (C) — RabbitMQ → enriquecimento → InfluxDB. Ver deploy/nta-server.Dockerfile
+  nta-server:
+    build:
+      context: .
+      dockerfile: deploy/nta-server.Dockerfile
+    image: nta-server:local
+    container_name: nta-server
+    restart: always
+    depends_on:   # só ordem de boot — o nta-server reconecta sozinho
+      - rabbitmq
+      - influxdb
+    environment:
+      - RABBIT_HOST=rabbitmq
+      - RABBIT_PORT=5672
+      - RABBIT_USER=${RABBITMQ_USER:-nta}
+      - RABBIT_PASS=${RABBITMQ_PASS:-nta-dev-password}
+      - RABBIT_MGMT_HOST=rabbitmq
+      - RABBIT_MGMT_PORT=15672
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=${INFLUX_TOKEN:-my-super-secret-auth-token}
+    ports:
+      - "127.0.0.1:9091:9091" # /health e /metrics (só localhost)
+    volumes:
+      - ./data:/app/data:ro                   # GeoLite2 (opcional)
+      - ./deploy/ioc:/app/deploy/ioc:ro       # blocklist.json (opcional)
+      - ./deploy/secrets:/app/deploy/secrets:ro # groq.env / abuseipdb.env (opcionais)
+
   # GRAFANA
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.1.2
     container_name: grafana
     restart: always
     ports:
       - "3000:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_RENDERING_SERVER_URL=http://gf-renderer:8081/render
       - GF_RENDERING_CALLBACK_URL=http://grafana:3000/
       - GF_RENDERING_RENDERER_TOKEN=${GF_RENDERER_TOKEN:-nta-render-token-change-me}
       - GF_RENDERING_RENDERER_REQUEST_TIMEOUT=120s
       - GF_RENDERING_TIMEOUT=120
+      - INFLUX_TOKEN=${INFLUX_TOKEN:-my-super-secret-auth-token} # datasource provisioning
       # Placeholders mantêm o provisioning válido sem .env (Grafana recusa token vazio);
       # alertas só são entregues com valores reais — ver .env.example.
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-telegram-disabled}
@@ -67,7 +101,7 @@ services:
 
   # GRAFANA IMAGE RENDERER (chromium headless — gera PNGs via /render/*)
   gf-renderer:
-    image: docker.io/grafana/grafana-image-renderer:latest
+    image: grafana/grafana-image-renderer:v5.12.4
     container_name: gf-renderer
     restart: always
     ports:
@@ -75,4 +109,3 @@ services:
     environment:
       - ENABLE_METRICS=true
       - AUTH_TOKEN=${GF_RENDERER_TOKEN:-nta-render-token-change-me}
-

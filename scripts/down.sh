@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# down.sh — derruba infra + mata ingestor (e agente, se requisitado).
+# down.sh — derruba a stack (inclui o container nta-server) e, se pedido, o agente.
 # Flags:  --with-agent  → também mata ./build/NetworkTrafficAnalyzer
 
 set -eu
@@ -19,9 +19,6 @@ if docker info >/dev/null 2>&1; then
 elif [ -S "/run/user/$(id -u)/podman/podman.sock" ]; then
     export DOCKER_HOST="unix:///run/user/$(id -u)/podman/podman.sock"
 fi
-
-echo "▶ Parando nta-server"
-pkill -f "./build/nta-server" 2>/dev/null && echo "  morto." || echo "  não estava rodando."
 
 if [ "$KILL_AGENT" -eq 1 ]; then
     echo "▶ Parando NetworkTrafficAnalyzer (sudo)"
