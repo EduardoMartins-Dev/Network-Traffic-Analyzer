@@ -1,13 +1,13 @@
-#include "../include/nta_net.h"
+#include "nta_net.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <math.h>
 #include <time.h>
-#include "../include/analyzer.h"
-#include "../include/publisher.h"
-#include "../include/collector.h"
+#include "analyzer.h"
+#include "publisher.h"
+#include "collector.h"
 
 /* ========================================================================= *
  * HOME_NET — CIDRs ignorados no IP layer (não no ARP).                      *

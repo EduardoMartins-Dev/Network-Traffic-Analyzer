@@ -1,6 +1,6 @@
 /* netif_posix.c — HOME_NET auto-detect via getifaddrs() (Linux/BSD/macOS). */
-#include "../../include/netif.h"
-#include "../../include/nta_net.h"
+#include "netif.h"
+#include "nta_net.h"
 
 #include <ifaddrs.h>
 #include <stdio.h>

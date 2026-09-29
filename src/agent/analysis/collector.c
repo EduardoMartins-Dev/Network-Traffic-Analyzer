@@ -1,5 +1,5 @@
 #include <string.h>
-#include "../../include/collector.h"
+#include "collector.h"
 
 /* Flag global — define aqui, extern em todos os outros módulos */
 int g_replay_mode = 0;

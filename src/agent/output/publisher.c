@@ -1,7 +1,7 @@
-#include "../../include/publisher.h"
-#include "../../include/collector.h"
-#include "../../include/cJSON.h"
-#include "../../include/pipeline.h"
+#include "publisher.h"
+#include "collector.h"
+#include "cJSON.h"
+#include "pipeline.h"
 
 #include <pthread.h>
 #include <stdio.h>

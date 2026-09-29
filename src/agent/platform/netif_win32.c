@@ -2,8 +2,8 @@
  *
  * O Npcap nomeia a interface como "\Device\NPF_{GUID}" e o IP Helper expõe o
  * mesmo "{GUID}" em AdapterName — é por ele que casamos os dois. */
-#include "../../include/netif.h"
-#include "../../include/nta_net.h"
+#include "netif.h"
+#include "nta_net.h"
 
 #include <iphlpapi.h>
 #include <stdio.h>

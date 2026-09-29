@@ -1,6 +1,6 @@
 /* service_win32.c — integração do agente com o Service Control Manager. */
-#include "../../include/service.h"
-#include "../../include/pipeline.h"
+#include "service.h"
+#include "pipeline.h"
 
 #include <windows.h>
 #include <direct.h>

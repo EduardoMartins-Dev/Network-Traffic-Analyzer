@@ -2,12 +2,13 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <pcap.h>
-#include "../include/publisher.h"
-#include "../include/capture.h"
-#include "../include/pipeline.h"
-#include "../include/replay.h"
-#include "../include/config.h"
-#include "../include/service.h"
+#include "publisher.h"
+#include "capture.h"
+#include "pipeline.h"
+#include "cli.h"
+#include "replay.h"
+#include "config.h"
+#include "service.h"
 
 /* ========================================================================= *
  * VERIFICAÇÃO DE PRIVILÉGIOS (Multiplataforma)                              *

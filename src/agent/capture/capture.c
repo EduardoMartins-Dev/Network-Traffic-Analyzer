@@ -1,11 +1,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <pcap.h>
-#include "../../include/nta_net.h"
-#include "../../include/capture.h"
-#include "../../include/analyzer.h"
-#include "../../include/collector.h"
-#include "../../include/pipeline.h"
+#include "nta_net.h"
+#include "capture.h"
+#include "analyzer.h"
+#include "collector.h"
+#include "pipeline.h"
 
 /* Em modo replay (`g_replay_mode == 1`) a análise ocorre sincronamente no *
  * mesmo thread do pcap_loop, bypassando o pipeline multi-thread para      *

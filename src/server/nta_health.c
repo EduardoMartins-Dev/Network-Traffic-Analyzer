@@ -8,10 +8,10 @@
  *  Em prod, colocar TLS reverse proxy (nginx/caddy) na frente.              *
  * ========================================================================= */
 
-#include "../../include/nta_health.h"
-#include "../../include/nta_server.h"
-#include "../../include/nta_scaler.h"
-#include "../../include/nta_consumer.h"
+#include "nta_health.h"
+#include "nta_server.h"
+#include "nta_scaler.h"
+#include "nta_consumer.h"
 
 #include <arpa/inet.h>
 #include <errno.h>

@@ -20,7 +20,7 @@
  *  instância. Latência WHOIS é alta (~200ms-2s) → cache aggressive crucial. *
  * ========================================================================= */
 
-#include "../../include/nta_whois.h"
+#include "nta_whois.h"
 
 #include <arpa/inet.h>
 #include <netdb.h>

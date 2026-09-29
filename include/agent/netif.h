@@ -5,8 +5,8 @@
  * Descoberta das redes IPv4 locais de uma interface (HOME_NET auto-detect). *
  *                                                                           *
  * Implementações por plataforma:                                            *
- *   src/platform/netif_posix.c — getifaddrs() (Linux, FreeBSD, macOS)       *
- *   src/platform/netif_win32.c — GetAdaptersAddresses() (Windows)           *
+ *   src/agent/platform/netif_posix.c — getifaddrs() (Linux, FreeBSD, macOS)       *
+ *   src/agent/platform/netif_win32.c — GetAdaptersAddresses() (Windows)           *
  *                                                                           *
  * `iface` é o nome usado no pcap_open_live: "eth0" no POSIX,                *
  * "\Device\NPF_{GUID}" no Windows (Npcap). Loopback é sempre incluída.      *

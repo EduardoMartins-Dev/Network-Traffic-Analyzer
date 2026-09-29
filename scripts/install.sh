@@ -82,32 +82,32 @@ if [ -z "$OS" ]; then
         Darwin)  OS="macos";   MGR="brew" ;;
     esac
 fi
-[ -n "$OS" ] || fail "SO não suportado automaticamente. Instale manualmente: docker compose, python3, libpcap-dev, librabbitmq-dev, cmake, gcc, libcurl-dev, libmaxminddb-dev."
+[ -n "$OS" ] || fail "SO não suportado automaticamente. Instale manualmente: docker compose, python3, libpcap-dev, librabbitmq-dev, cmake, gcc."
 ok "SO detectado: $OS (manager: $MGR)"
 
 # ----- pacotes por papel -----------------------------------------------------
 # server: docker compose + python (tudo o resto roda em container)
-# agent : compilador, libpcap, librabbitmq, libcurl, libmaxminddb (servidor C)
+# agent : compilador, libpcap, librabbitmq (o nta-server é compilado na imagem Docker)
 case "$MGR" in
     apt)
         SERVER_PKGS="docker.io docker-compose-plugin python3 python3-venv python3-pip curl"
-        AGENT_PKGS="build-essential cmake git libpcap-dev librabbitmq-dev libcurl4-openssl-dev libmaxminddb-dev pkg-config"
+        AGENT_PKGS="build-essential cmake git libpcap-dev librabbitmq-dev pkg-config"
         ;;
     dnf)
         SERVER_PKGS="moby-engine docker-compose python3 python3-pip curl"
-        AGENT_PKGS="gcc make cmake git libpcap-devel librabbitmq-devel libcurl-devel libmaxminddb-devel pkgconfig"
+        AGENT_PKGS="gcc make cmake git libpcap-devel librabbitmq-devel pkgconfig"
         ;;
     pacman)
         SERVER_PKGS="docker docker-compose python python-pip curl"
-        AGENT_PKGS="base-devel cmake git libpcap rabbitmq-c curl libmaxminddb pkgconf"
+        AGENT_PKGS="base-devel cmake git libpcap rabbitmq-c pkgconf"
         ;;
     pkg)
         SERVER_PKGS="docker docker-compose python311 py311-pip curl"
-        AGENT_PKGS="cmake git rabbitmq-c curl libmaxminddb pkgconf"
+        AGENT_PKGS="cmake git rabbitmq-c pkgconf"
         ;;
     brew)
         SERVER_PKGS="docker docker-compose python@3.11 curl"
-        AGENT_PKGS="cmake git libpcap rabbitmq-c curl libmaxminddb pkg-config"
+        AGENT_PKGS="cmake git libpcap rabbitmq-c pkg-config"
         ;;
 esac
 
@@ -153,7 +153,7 @@ fi
 # ----- build agente ----------------------------------------------------------
 if [ "$AGENT" -eq 1 ] && [ "$DO_BUILD" -eq 1 ]; then
     log "[3/3] build do agente C"
-    cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+    cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DNTA_BUILD_SERVER=OFF
     cmake --build build -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
     [ -x build/NetworkTrafficAnalyzer ] || fail "binário não foi gerado."
     ok "binário: build/NetworkTrafficAnalyzer"

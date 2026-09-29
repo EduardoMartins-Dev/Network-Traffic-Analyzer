@@ -2,7 +2,7 @@
 #define NTA_SERVICE_H
 
 /* ========================================================================= *
- * Windows Service do agente (src/platform/service_win32.c). Só existe no    *
+ * Windows Service do agente (src/agent/platform/service_win32.c). Só existe no    *
  * Windows — no Linux o agente roda via systemd (deploy/agent.service).      *
  *                                                                           *
  * Serviço "NTAAgent": SERVICE_AUTO_START, conta LocalSystem, reinício       *

@@ -9,8 +9,8 @@
  *  (300s) pra não martelar API em falha temporária. Eviction lazy on get.  *
  * ========================================================================= */
 
-#include "../../include/nta_abuse.h"
-#include "../../include/cJSON.h"
+#include "nta_abuse.h"
+#include "cJSON.h"
 
 #include <curl/curl.h>
 #include <pthread.h>

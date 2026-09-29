@@ -22,7 +22,7 @@ Detailed install steps live in [README.md § Instalação](./README.md#instalaç
 
 | Want to | Look at |
 |---------|---------|
-| Add a new attack detector | `src/analysis/analyzer.c` + tests in `tests/pcaps/` |
+| Add a new attack detector | `src/agent/analysis/analyzer.c` + tests in `tests/pcaps/` |
 | Add a new threat-intel enricher | mirror `src/server/nta_abuse.c` (cache + libcurl) |
 | Improve dashboards | `grafana/dashboards/*.json` |
 | Fix a bug | open an issue first if behavior is non-obvious |
@@ -109,7 +109,7 @@ Passos detalhados em [README.md § Instalação](./README.md#instalação).
 
 | Quer | Veja |
 |------|------|
-| Adicionar novo detector de ataque | `src/analysis/analyzer.c` + testes em `tests/pcaps/` |
+| Adicionar novo detector de ataque | `src/agent/analysis/analyzer.c` + testes em `tests/pcaps/` |
 | Adicionar enricher de threat-intel | espelhe `src/server/nta_abuse.c` (cache + libcurl) |
 | Melhorar dashboards | `grafana/dashboards/*.json` |
 | Corrigir bug | abra issue antes se o comportamento não for óbvio |

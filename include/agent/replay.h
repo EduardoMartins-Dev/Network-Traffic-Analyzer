@@ -2,12 +2,8 @@
 #define NTA_REPLAY_H
 
 /* ========================================================================= *
- * REPLAY FRAMEWORK (v4.1)                                                   *
- *                                                                           *
- * Modos de execução do binário:                                             *
- *   MODE_LIVE        — captura ao vivo via interface de rede (padrão)       *
- *   MODE_REPLAY_FILE — lê pacotes de um arquivo .pcap                       *
- *   MODE_REPLAY_DIR  — processa todos os .pcap de um diretório              *
+ * REPLAY FRAMEWORK (v4.1) — replay de .pcap + validação contra gabarito.   *
+ * Os modos de execução do binário ficam em cli.h.                           *
  * ========================================================================= */
 
 #define MAX_EXPECTED 256
@@ -15,26 +11,6 @@
 /* ---------------------------------------------------------------------- *
  * Tipos de dados                                                           *
  * ---------------------------------------------------------------------- */
-
-typedef enum {
-    MODE_LIVE        = 0,
-    MODE_REPLAY_FILE = 1,
-    MODE_REPLAY_DIR  = 2,
-    MODE_LIST_IFACES = 3,  /* --list-interfaces: nomes aceitos pelo modo live */
-    MODE_SERVICE_INSTALL   = 4,  /* --install-service (Windows)               */
-    MODE_SERVICE_UNINSTALL = 5   /* --uninstall-service (Windows)             */
-} RunMode;
-
-typedef struct {
-    RunMode  mode;
-    char    *iface;        /* MODE_LIVE: nome da interface                  */
-    char    *pcap_file;    /* MODE_REPLAY_FILE: caminho do .pcap            */
-    char    *expect_file;  /* --expect: gabarito JSON (opcional)            */
-    char    *replay_dir;   /* MODE_REPLAY_DIR: diretório com .pcap          */
-    char    *report_file;  /* --report: caminho para relatório JSON (opt.)  */
-    char    *config_file;  /* --config: arquivo CHAVE=VALOR (opt.)          */
-    int      service;      /* --service: iniciado pelo SCM (Windows)        */
-} AgentArgs;
 
 typedef struct {
     char attack_type[32];  /* ex: "SYN_FLOOD"   */
@@ -61,8 +37,6 @@ typedef struct {
 /* ---------------------------------------------------------------------- *
  * Funções públicas                                                         *
  * ---------------------------------------------------------------------- */
-
-AgentArgs    parse_args(int argc, char *argv[]);
 
 Gabarito    *gabarito_load(const char *json_path);
 void         gabarito_free(Gabarito *g);

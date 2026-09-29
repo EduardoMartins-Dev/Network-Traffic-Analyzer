@@ -6,7 +6,7 @@
  *  curto pra não engolir SIGINT.                                           *
  * ========================================================================= */
 
-#include "../../include/nta_consumer.h"
+#include "nta_consumer.h"
 
 #include <stdio.h>
 #include <stdlib.h>

@@ -51,7 +51,7 @@ step() { hr; echo "▶ $*"; hr; }
 # 1. BUILD
 # ============================================================================
 step "1/3  BUILD — cmake + make"
-cmake -B "$BUILD_DIR" -S . || { echo "✗ cmake falhou"; exit 1; }
+cmake -B "$BUILD_DIR" -S . -DNTA_BUILD_SERVER=OFF || { echo "✗ cmake falhou"; exit 1; }
 cmake --build "$BUILD_DIR" -j"$(nproc 2>/dev/null || echo 2)" \
     || { echo "✗ build falhou"; exit 1; }
 

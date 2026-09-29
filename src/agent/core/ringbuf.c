@@ -1,4 +1,4 @@
-#include "../../include/ringbuf.h"
+#include "ringbuf.h"
 #include <stdlib.h>
 #include <string.h>
 

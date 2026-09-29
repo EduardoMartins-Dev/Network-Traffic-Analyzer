@@ -13,7 +13,7 @@
  *  hado. O mutex aqui protege APENAS a tabela hash.                        *
  * ========================================================================= */
 
-#include "../../include/nta_geoip.h"
+#include "nta_geoip.h"
 
 #include <maxminddb.h>
 #include <pthread.h>

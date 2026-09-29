@@ -6,9 +6,9 @@
  *  pede pool_down. Respeita min/max workers.                                *
  * ========================================================================= */
 
-#include "../../include/nta_scaler.h"
-#include "../../include/nta_influx.h"
-#include "../../include/cJSON.h"
+#include "nta_scaler.h"
+#include "nta_influx.h"
+#include "cJSON.h"
 
 #include <stdio.h>
 #include <stdlib.h>

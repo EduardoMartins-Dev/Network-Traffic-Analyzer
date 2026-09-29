@@ -3,8 +3,8 @@
  *  de incidente. Substitui src/ingestor/narrator.py em C puro (libcurl).    *
  * ========================================================================= */
 
-#include "../../include/nta_narrator.h"
-#include "../../include/cJSON.h"
+#include "nta_narrator.h"
+#include "cJSON.h"
 
 #include <stdio.h>
 #include <stdlib.h>

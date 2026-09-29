@@ -3,11 +3,11 @@
 #ifdef __linux__
 #define _GNU_SOURCE
 #endif
-#include "../../include/pipeline.h"
-#include "../../include/ringbuf.h"
-#include "../../include/capture.h"
-#include "../../include/analyzer.h"
-#include "../../include/publisher.h"
+#include "pipeline.h"
+#include "ringbuf.h"
+#include "capture.h"
+#include "analyzer.h"
+#include "publisher.h"
 
 #include <pthread.h>
 #include <sched.h>
@@ -17,7 +17,7 @@
 #include <string.h>
 #include <time.h>
 #include <pcap.h>
-#include "../../include/netif.h"
+#include "netif.h"
 #ifdef _WIN32
 #include <windows.h>   /* SetThreadPriority */
 #endif

@@ -14,8 +14,8 @@
  *  usado aqui) precisariam de aspas + escape de '\\' e '"'.                 *
  * ========================================================================= */
 
-#include "../../include/nta_influx.h"
-#include "../../include/cJSON.h"
+#include "nta_influx.h"
+#include "cJSON.h"
 
 #include <stdio.h>
 #include <stdlib.h>
