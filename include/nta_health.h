@@ -7,7 +7,8 @@
 /* Healthcheck HTTP endpoint — v8.1.
  *
  * Servidor TCP raw (sem libs externas) numa thread dedicada. Rotas:
- *   GET /health     → 200 JSON {status, uptime_s, workers, backlog, version}
+ *   GET /health     → 200 JSON {status, uptime_s, workers, amqp_connected,
+ *                     backlog, version}; 503 se nenhum consumer AMQP conectado
  *   GET /metrics    → 200 text/plain Prometheus exposition format
  *   GET /           → 200 HTML banner com links
  *   *               → 404

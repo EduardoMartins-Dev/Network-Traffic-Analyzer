@@ -20,14 +20,26 @@ typedef struct {
     int                     connected;
 } NtaAmqp;
 
+/* Consumers com conexão AMQP aberta agora (todos os workers). Lido pelo
+ * /health — 0 com o processo de pé significa broker inalcançável. */
+extern atomic_int g_nta_amqp_connected;
+
 /* Abre conn TCP + login + canal + declara fila durável. prefetch_count permite
  * distribuição justa entre consumers. Retorna 0 em sucesso. */
 int nta_amqp_open(NtaAmqp *a, const NtaConfig *cfg,
                   const char *queue, int prefetch_count);
 
+/* nta_amqp_open com backoff exponencial (1s → 30s) até conectar. Retorna -1
+ * só quando nta_should_stop() ou `worker_stop` (NULL = ignora) pedem parada.
+ * `tag` prefixa os logs (ex: "W-3"). */
+int nta_amqp_open_retry(NtaAmqp *a, const NtaConfig *cfg, const char *queue,
+                        int prefetch_count, atomic_int *worker_stop,
+                        const char *tag);
+
 /* Inicia basic_consume e bloqueia consumindo até nta_should_stop() ou
  * `worker_stop` virar 1 (NULL = ignora — só global). Usa auto_ack=1.
- * Timeout interno de 1s garante responsividade aos sinais.                */
+ * Timeout interno de 1s garante responsividade aos sinais.
+ * Retorna 0 em parada pedida, -1 se a conexão caiu (chamador reconecta).  */
 int nta_amqp_consume_loop(NtaAmqp *a, const char *queue,
                            nta_on_message_fn handler, void *user_ctx,
                            atomic_int *worker_stop);
