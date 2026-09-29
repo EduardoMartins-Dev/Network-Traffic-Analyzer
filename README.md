@@ -239,26 +239,34 @@ sudo dnf install moby-engine docker-compose python3 python3-pip
 #### Subir o stack
 
 ```bash
-./scripts/up.sh                 # nta-server em background (default)
-./scripts/up.sh --foreground    # nta-server em foreground (Ctrl+C para parar)
-./scripts/up.sh --no-ingest     # só infra docker
+./scripts/up.sh                 # stack completa em containers, incl. nta-server
+./scripts/up.sh --foreground    # idem + acompanha os logs do nta-server
+./scripts/up.sh --no-ingest     # só infra (sem o container nta-server)
 ```
+
+O servidor inteiro roda em containers — funciona igual em Linux, macOS e
+Windows (Docker Desktop + Git Bash). O `nta-server` é compilado na imagem
+(`deploy/nta-server.Dockerfile`) e expõe `/health` em `127.0.0.1:9091`.
 
 Manual (sem scripts):
 ```bash
 ./scripts/gen_agent_cert.sh server   # obrigatório: rabbitmq.conf exige os certs TLS
-cp .env.example .env                 # opcional: alertas Telegram
-docker compose up -d
-./build/nta-server &                 # inclui o narrator (GROQ_API_KEY)
+cp .env.example .env                 # credenciais (recomendado) e alertas Telegram
+docker compose up -d --build
 ```
 
-Acesso:
-- Grafana — http://\<host>:3000 · admin/admin *(datasource InfluxDB + dashboard "Network Traffic Analyzer — Visão Geral" já provisionados em `grafana/`)*
-- RabbitMQ Management — http://\<host>:15673 · guest/guest
+Acesso (credenciais do `.env`; defaults de desenvolvimento entre parênteses):
+- Grafana — http://\<host>:3000 · admin/`GRAFANA_ADMIN_PASSWORD` (admin) *(datasource InfluxDB + dashboard "Network Traffic Analyzer — Visão Geral" já provisionados em `grafana/`)*
+- RabbitMQ Management — http://\<host>:15673 · `RABBITMQ_USER`/`RABBITMQ_PASS` (nta/nta-dev-password)
 
-#### Agentes remotos: user dedicado no RabbitMQ
+> Usuários, senhas e token só são aplicados na **primeira** subida (volumes
+> `rabbitmq_data/` e `influxdb_data/` vazios). Em instalação existente, altere
+> pelos próprios serviços ou recrie os volumes.
 
-O user `guest` **só aceita login de `localhost`**. Para cada agente remoto:
+#### Agentes: credenciais no RabbitMQ
+
+Um agente no mesmo host pode usar `AGENT_ID`/`AGENT_TOKEN` = `RABBITMQ_USER`/`RABBITMQ_PASS`.
+O user `guest` **só aceita login de `localhost`** e não é criado pela stack. Para cada agente remoto:
 
 ```bash
 docker exec rabbitmq rabbitmqctl add_user agente-01 <senha-forte>
@@ -744,9 +752,10 @@ O workflow `.github/workflows/test-ids.yml` executa a cada push/PR:
 
 | Serviço | URL | Usuário | Senha |
 |---|---|---|---|
-| RabbitMQ Admin | http://localhost:15673 | guest | guest |
-| InfluxDB UI | http://localhost:8086 | admin | adminpassword123 |
-| Grafana | http://localhost:3000 | admin | admin |
+| RabbitMQ Admin | http://localhost:15673 | `RABBITMQ_USER` (nta) | `RABBITMQ_PASS` (nta-dev-password) |
+| InfluxDB UI | http://localhost:8086 | admin | `INFLUX_PASSWORD` (adminpassword123) |
+| Grafana | http://localhost:3000 | admin | `GRAFANA_ADMIN_PASSWORD` (admin) |
+| nta-server health | http://localhost:9091/health | — | — |
 
 ---
 

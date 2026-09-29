@@ -17,4 +17,4 @@ datasources:
       defaultBucket: network_traffic
       tlsSkipVerify: true
     secureJsonData:
-      token: my-super-secret-auth-token
+      token: ${INFLUX_TOKEN}

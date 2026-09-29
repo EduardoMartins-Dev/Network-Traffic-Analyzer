@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# up.sh — sobe infra (rabbitmq/influxdb/grafana) + nta-server (inclui narrator C).
+# up.sh — sobe a stack do servidor em containers: rabbitmq, influxdb, grafana
+# e nta-server (inclui narrator C). Funciona em Linux, macOS e Windows (Git Bash).
 # Detecta podman rootless e aponta DOCKER_HOST pro socket do usuário.
 # Flags:
-#   --no-ingest  → só infra
-#   --foreground → roda o nta-server em foreground (Ctrl+C para parar). Default: background.
+#   --no-ingest  → só infra (sem o container nta-server)
+#   --foreground → após subir, acompanha os logs do nta-server (Ctrl+C só sai dos logs)
 
 set -eu
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -38,8 +39,13 @@ if [ ! -f deploy/secrets/tls/server.crt ] || [ ! -f deploy/secrets/tls/ca.crt ];
     "$ROOT_DIR/scripts/gen_agent_cert.sh" server
 fi
 
-echo "▶ Subindo infra"
-docker compose up -d
+if [ "$START_INGEST" -eq 1 ]; then
+    echo "▶ Subindo stack (build do nta-server na primeira vez)"
+    docker compose up -d --build
+else
+    echo "▶ Subindo infra (sem nta-server)"
+    docker compose up -d rabbitmq influxdb grafana gf-renderer
+fi
 
 # Espera RabbitMQ aceitar AMQP (não só TCP — o listener 5672 registra depois da porta abrir).
 echo "▶ Aguardando RabbitMQ aceitar AMQP..."
@@ -66,44 +72,21 @@ if [ ! -f deploy/secrets/groq.env ]; then
     echo "  cp deploy/secrets/groq.env.example deploy/secrets/groq.env e preencha GROQ_API_KEY."
 fi
 
-if [ "$START_INGEST" -eq 0 ]; then
-    echo "✓ Infra no ar (ingestor não iniciado)."
-    exit 0
-fi
-
-if [ ! -x build/nta-server ]; then
-    echo "✗ build/nta-server não encontrado. Rode 'cmake -B build -S . && cmake --build build' antes." >&2
-    exit 1
-fi
-
-if [ "$FOREGROUND" -eq 1 ]; then
-    cat <<EOF
-✓ Infra de pé. Iniciando nta-server em foreground (Ctrl+C para parar)
-  Grafana   http://localhost:3000   admin/admin
-  RabbitMQ  http://localhost:15673  guest/guest
-  InfluxDB  http://localhost:8086
-EOF
-    exec ./build/nta-server
-fi
-
-# Background (default)
-if pgrep -f "build/nta-server" >/dev/null 2>&1; then
-    echo "▶ nta-server já está rodando."
-else
-    ( setsid nohup ./build/nta-server </dev/null \
-        >/tmp/nta-server.log 2>&1 & ) 2>/dev/null
-    sleep 1
-    pgrep -f "build/nta-server" >/dev/null && \
-        echo "▶ nta-server iniciado (log: /tmp/nta-server.log)" || \
-        { echo "✗ Falha ao subir nta-server. Veja /tmp/nta-server.log"; exit 1; }
-fi
-
 cat <<EOF
 
-✓ Tudo no ar.
-  Grafana   http://localhost:3000   admin/admin
-  RabbitMQ  http://localhost:15673  guest/guest
+✓ Stack no ar.
+  Grafana   http://localhost:3000   admin / \$GRAFANA_ADMIN_PASSWORD (default admin)
+  RabbitMQ  http://localhost:15673  \$RABBITMQ_USER / \$RABBITMQ_PASS (default nta / nta-dev-password)
   InfluxDB  http://localhost:8086
-  Agente    (rodar manualmente, precisa sudo fora de toolbox):
+EOF
+if [ "$START_INGEST" -eq 1 ]; then
+    cat <<EOF
+  nta-server health  http://localhost:9091/health   (logs: docker compose logs -f nta-server)
+  Agente    (rodar no host monitorado, com AGENT_ID/AGENT_TOKEN = usuário RabbitMQ):
             sudo ./build/NetworkTrafficAnalyzer <interface>
 EOF
+fi
+
+if [ "$FOREGROUND" -eq 1 ] && [ "$START_INGEST" -eq 1 ]; then
+    exec docker compose logs -f nta-server
+fi
