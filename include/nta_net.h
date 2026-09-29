@@ -23,6 +23,11 @@
 
 #define NTA_ETH_HLEN      14
 
+/* Os cabeçalhos começam em offsets não alinhados do buffer do pcap (IPv4 no
+ * byte 14): `packed` faz o compilador gerar acesso desalinhado seguro —
+ * sem isso o cast é comportamento indefinido (e falha em ARM estrito). */
+#define NTA_PACKED __attribute__((packed))
+
 #define NTA_PROTO_ICMP     1
 #define NTA_PROTO_TCP      6
 #define NTA_PROTO_UDP     17
@@ -38,7 +43,7 @@ typedef struct {
     uint16_t check;
     uint32_t saddr;
     uint32_t daddr;
-} nta_ipv4_hdr;
+} NTA_PACKED nta_ipv4_hdr;
 
 #define NTA_IPV4_HLEN(h)  (((h)->ver_ihl & 0x0F) * 4)
 
@@ -52,7 +57,7 @@ typedef struct {
     uint16_t window;
     uint16_t check;
     uint16_t urg_ptr;
-} nta_tcp_hdr;
+} NTA_PACKED nta_tcp_hdr;
 
 #define NTA_TH_FIN  0x01
 #define NTA_TH_SYN  0x02
@@ -66,6 +71,6 @@ typedef struct {
     uint16_t dport;
     uint16_t len;
     uint16_t check;
-} nta_udp_hdr;
+} NTA_PACKED nta_udp_hdr;
 
 #endif /* NTA_NET_H */

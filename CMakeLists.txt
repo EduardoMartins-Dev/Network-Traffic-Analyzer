@@ -112,3 +112,36 @@ if(NOT WIN32)
             Threads::Threads
     )
 endif()
+
+# --- TESTES UNITÁRIOS (ctest) -------------------------------------------------
+# cmake --build build && ctest --test-dir build --output-on-failure
+option(NTA_BUILD_TESTS "Compila os testes unitários (ctest)" ON)
+if(NTA_BUILD_TESTS)
+    enable_testing()
+    find_package(Threads REQUIRED)
+
+    add_executable(test_ringbuf tests/unit/test_ringbuf.c src/core/ringbuf.c)
+    target_link_libraries(test_ringbuf PRIVATE Threads::Threads)
+
+    add_executable(test_config tests/unit/test_config.c src/core/config.c)
+
+    add_executable(test_analyzer tests/unit/test_analyzer.c
+            src/analysis/analyzer.c src/analysis/collector.c)
+    if(WIN32)
+        target_compile_definitions(test_analyzer PRIVATE _WIN32_WINNT=0x0601)
+        target_link_libraries(test_analyzer PRIVATE Ws2_32)
+    else()
+        target_link_libraries(test_analyzer PRIVATE m)
+    endif()
+
+    foreach(t test_ringbuf test_config test_analyzer)
+        add_test(NAME ${t} COMMAND ${t})
+    endforeach()
+
+    # Parser WHOIS do nta-server (servidor é Linux/Docker)
+    if(NOT WIN32)
+        add_executable(test_whois tests/unit/test_whois.c)
+        target_link_libraries(test_whois PRIVATE Threads::Threads)
+        add_test(NAME test_whois COMMAND test_whois)
+    endif()
+endif()
