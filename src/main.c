@@ -6,11 +6,14 @@
 #include "../include/capture.h"
 #include "../include/pipeline.h"
 #include "../include/replay.h"
+#include "../include/config.h"
+#include "../include/service.h"
 
 /* ========================================================================= *
  * VERIFICAÇÃO DE PRIVILÉGIOS (Multiplataforma)                              *
  * ========================================================================= */
 #ifdef _WIN32
+    #include <windows.h>   /* SetConsoleOutputCP */
     /* Quem decide é o Npcap: com "Restrict to Administrators" (AdminOnly=1)
      * o pcap_open_live falha e o erro sai no log da captura. Sem essa opção,
      * usuário comum captura normalmente — não bloqueamos aqui. */
@@ -46,24 +49,70 @@ static void on_signal(int sig) {
 }
 
 int main(int argc, char *argv[]) {
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);   /* mensagens são UTF-8 (acentos no console) */
+#endif
     AgentArgs args = parse_args(argc, argv);
+
+    /* --config: CHAVE=VALOR vira ambiente (o ambiente já definido prevalece).
+     * Carregado antes de tudo — init_queue/pipeline só leem getenv(). */
+    if (args.config_file) {
+        int n = config_load_file(args.config_file);
+        if (n < 0) {
+            fprintf(stderr, "Erro: não foi possível ler a config: %s\n",
+                    args.config_file);
+            return 1;
+        }
+        fprintf(stderr, "[CONFIG] %s: %d chave(s) aplicada(s)\n",
+                args.config_file, n);
+    }
+
+#ifdef _WIN32
+    if (args.mode == MODE_SERVICE_INSTALL) {
+        if (!args.config_file) {
+            fprintf(stderr, "Erro: --install-service exige --config <arquivo>.\n");
+            return 1;
+        }
+        return service_install(args.config_file, args.iface);
+    }
+    if (args.mode == MODE_SERVICE_UNINSTALL)
+        return service_uninstall();
+#else
+    if (args.mode == MODE_SERVICE_INSTALL || args.mode == MODE_SERVICE_UNINSTALL ||
+        args.service) {
+        fprintf(stderr, "Erro: modo serviço só existe no Windows "
+                        "(no Linux use deploy/agent.service com systemd).\n");
+        return 1;
+    }
+#endif
 
     /* ------------------------------------------------------------------- *
      * MODO LIVE — pipeline multi-thread (v5.0)                             *
      * ------------------------------------------------------------------- */
     if (args.mode == MODE_LIVE) {
+        const char *iface = args.iface ? args.iface : getenv("AGENT_IFACE");
+        if (!iface || !*iface) {
+            fprintf(stderr, "Erro: informe a interface (argumento ou "
+                            "AGENT_IFACE). Veja --list-interfaces.\n");
+            return 1;
+        }
+
         if (!has_privileges()) {
             fprintf(stderr, "Erro: %s\n", PRIVILEGE_MSG);
             return 1;
         }
 
+#ifdef _WIN32
+        if (args.service)
+            return service_run(iface);
+#endif
+
         signal(SIGINT,  on_signal);
         signal(SIGTERM, on_signal);
 
-        printf("Iniciando pipeline v5.0 em '%s' (Ctrl+C para parar)\n",
-               args.iface);
+        printf("Iniciando pipeline v5.0 em '%s' (Ctrl+C para parar)\n", iface);
 
-        return pipeline_run(args.iface);
+        return pipeline_run(iface) == 0 ? 0 : 1;
     }
 
     /* ------------------------------------------------------------------- *
