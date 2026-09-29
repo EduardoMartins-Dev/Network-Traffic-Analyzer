@@ -61,4 +61,4 @@ dash:
 	./scripts/dash_gen.py --name "$(NAME)" --desc "$(DESC)"
 
 clean:
-	rm -rf build/ src/ingestor/__pycache__ scripts/__pycache__
+	rm -rf build/ scripts/__pycache__

@@ -2,7 +2,7 @@
 # quickstart.sh — caminho zero-a-rodando em uma chamada.
 #
 #   1. install.sh        (deps + build)
-#   2. up.sh             (stack docker + ingestor)
+#   2. up.sh             (stack docker, incl. nta-server)
 #   3. smoke-test.sh     (build + replay opcional)
 #
 # Flags repassadas:
@@ -37,7 +37,7 @@ for f in "${INSTALL_FLAGS[@]+${INSTALL_FLAGS[@]}}"; do
     [ "$f" = "--agent-only" ] && exit 0
 done
 
-step "2/3  UP (stack docker + ingestor)"
+step "2/3  UP (stack docker, incl. nta-server)"
 ./scripts/up.sh "${UP_FLAGS[@]+${UP_FLAGS[@]}}"
 
 if [ "$DO_SMOKE" -eq 0 ]; then
