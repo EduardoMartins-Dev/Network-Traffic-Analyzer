@@ -60,4 +60,4 @@ jobs:
         run: |
           gh release create "${{ github.ref_name }}" build\installer\*.exe `
             --title "${{ github.ref_name }}" --generate-notes `
-            --notes "Agente Windows: instale o Npcap (modo compatível com WinPcap) e rode o NTA-Agent-Setup. Servidor: docker compose (ver README)."
+            --notes "Agente Windows: instale o Npcap (opções padrão) e rode o NTA-Agent-Setup. Servidor: docker compose (ver README)."

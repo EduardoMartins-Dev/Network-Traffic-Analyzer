@@ -1,0 +1,15 @@
+; Funções do wpcap.dll (Npcap) usadas pelo agente. O CMake gera a partir
+; daqui uma import lib de DELAY-LOAD (dlltool --output-delaylib): o DLL só é
+; carregado na primeira chamada, depois que main() aponta o SetDllDirectory
+; para System32\Npcap — assim o agente funciona com o Npcap instalado sem o
+; "WinPcap API-compatible Mode". Ao usar uma função pcap nova, inclua-a aqui.
+LIBRARY wpcap.dll
+EXPORTS
+    pcap_breakloop
+    pcap_close
+    pcap_findalldevs
+    pcap_freealldevs
+    pcap_loop
+    pcap_next_ex
+    pcap_open_live
+    pcap_open_offline

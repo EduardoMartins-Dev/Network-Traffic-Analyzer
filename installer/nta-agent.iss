@@ -5,7 +5,7 @@
 ;   (espera build\NetworkTrafficAnalyzer.exe — build estático MSYS2/UCRT64)
 ;
 ; O que faz:
-;   - exige o Npcap instalado em modo compatível com WinPcap (wpcap.dll);
+;   - exige o Npcap instalado (com ou sem o modo compatível com WinPcap);
 ;   - pergunta servidor/porta/usuário/token e a interface de captura;
 ;   - grava C:\ProgramData\NTA\agent.conf legível só por SYSTEM/Administradores
 ;     (guarda o token); numa atualização o agent.conf existente é mantido;
@@ -75,11 +75,13 @@ begin
   Result := FileExists(ConfigPath);
 end;
 
-{ O .exe importa wpcap.dll do System32: exige o modo compatível com WinPcap. }
+{ O agente carrega o wpcap.dll de System32\Npcap (delay-load), então vale
+  qualquer modo de instalação do Npcap, com ou sem compatibilidade WinPcap. }
 function NpcapReady: Boolean;
 begin
   Result := RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\npcap') and
-            FileExists(ExpandConstant('{sys}\wpcap.dll'));
+            (FileExists(ExpandConstant('{sys}\Npcap\wpcap.dll')) or
+             FileExists(ExpandConstant('{sys}\wpcap.dll')));
 end;
 
 function InitializeSetup: Boolean;
@@ -89,9 +91,8 @@ begin
   Result := True;
   if not NpcapReady then
   begin
-    if SuppressibleMsgBox('O Npcap não foi encontrado, ou foi instalado sem a opção ' +
-        '"Install Npcap in WinPcap API-compatible Mode".' + #13#10#13#10 +
-        'Instale o Npcap marcando essa opção e execute este instalador novamente.' + #13#10#13#10 +
+    if SuppressibleMsgBox('O Npcap não foi encontrado.' + #13#10#13#10 +
+        'Instale o Npcap (opções padrão) e execute este instalador novamente.' + #13#10#13#10 +
         'Abrir a página de download do Npcap agora?',
         mbError, MB_YESNO, IDNO) = IDYES then
       ShellExec('open', 'https://npcap.com/#download', '', '', SW_SHOWNORMAL, ewNoWait, ErrCode);

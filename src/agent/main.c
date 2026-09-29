@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <signal.h>
 #include <pcap.h>
 #include "publisher.h"
@@ -43,6 +44,28 @@
     static const char *PRIVILEGE_MSG = "Execute com sudo ou como root.";
 #endif
 
+#ifdef _WIN32
+/* O Npcap sem "WinPcap API-compatible Mode" instala o wpcap.dll só em
+ * System32\Npcap. Como ele é delay-load (platform/wpcap.def), apontamos a
+ * busca para lá antes da 1ª chamada pcap — e já carregamos aqui, para dar
+ * erro claro se o Npcap não estiver instalado. No modo compatível o mesmo
+ * diretório também existe, então o caminho é único. */
+static int load_npcap(void) {
+    char dir[MAX_PATH];
+    UINT n = GetSystemDirectoryA(dir, MAX_PATH);
+    if (n > 0 && n + sizeof("\\Npcap") <= MAX_PATH) {
+        strcat(dir, "\\Npcap");
+        SetDllDirectoryA(dir);
+    }
+    if (!LoadLibraryA("wpcap.dll")) {
+        fprintf(stderr, "Erro: Npcap não encontrado. Instale em "
+                        "https://npcap.com/#download e tente novamente.\n");
+        return 0;
+    }
+    return 1;
+}
+#endif
+
 /* Signal handler — seguro para SIGINT/SIGTERM (pcap_breakloop é async-safe). */
 static void on_signal(int sig) {
     (void)sig;
@@ -78,6 +101,9 @@ int main(int argc, char *argv[]) {
     }
     if (args.mode == MODE_SERVICE_UNINSTALL)
         return service_uninstall();
+
+    /* Daqui em diante todos os modos usam libpcap (live, replay, listagem). */
+    if (!load_npcap()) return 1;
 #else
     if (args.mode == MODE_SERVICE_INSTALL || args.mode == MODE_SERVICE_UNINSTALL ||
         args.service) {
