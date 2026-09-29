@@ -20,10 +20,14 @@ add_executable(NetworkTrafficAnalyzer
 
 if(WIN32)
     # -------------------------------------------------------------------------
-    # Windows (validação planejada para v5.1): requer Npcap SDK e substituição
-    # do backend de threads (pthreads-w32 ou _beginthreadex). O pipeline v5.0
-    # usa pthreads + SCHED_FIFO, específicos de Linux.
+    # Windows: toolchain MinGW-w64 (gcc/clang). MSVC não é suportado — o
+    # pipeline usa atômicos C11 (<stdatomic.h>), ainda experimentais no MSVC.
+    # Threads/tempo POSIX vêm do winpthreads do MinGW; requer Npcap SDK.
     # -------------------------------------------------------------------------
+    target_sources(NetworkTrafficAnalyzer PRIVATE src/platform/netif_win32.c)
+    # inet_pton/inet_ntop e GetAdaptersAddresses.OnLinkPrefixLength: Windows 7+
+    target_compile_definitions(NetworkTrafficAnalyzer PRIVATE _WIN32_WINNT=0x0601)
+
     set(NPCAP_SDK_DIR "C:/Npcap-sdk" CACHE PATH "Diretorio raiz do Npcap SDK")
 
     include_directories("${NPCAP_SDK_DIR}/Include")
@@ -38,13 +42,17 @@ if(WIN32)
         "${NPCAP_LIB_DIR}/wpcap.lib"
         "${NPCAP_LIB_DIR}/Packet.lib"
         Ws2_32
+        Iphlpapi
+        Shell32   # IsUserAnAdmin (checagem de privilégio em main.c)
         rabbitmq
+        pthread
     )
 else()
     # -------------------------------------------------------------------------
     # Linux / FreeBSD / macOS: libpcap + librabbitmq + pthreads (pipeline v5.0)
     # -------------------------------------------------------------------------
     find_package(Threads REQUIRED)
+    target_sources(NetworkTrafficAnalyzer PRIVATE src/platform/netif_posix.c)
 
     # FreeBSD instala libs de terceiros via ports/pkg em /usr/local/{lib,include}.
     if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")

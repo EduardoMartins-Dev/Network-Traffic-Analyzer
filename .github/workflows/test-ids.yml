@@ -66,3 +66,36 @@ jobs:
             sleep 1
           done
           docker logs nta; exit 1
+
+  # Compila (sem link) as fontes do agente para Windows com MinGW-w64.
+  # Guarda a portabilidade até o job nativo (MSYS2 + Npcap) substituir este.
+  agent-windows-cross:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Toolchain MinGW-w64 + Npcap SDK + headers rabbitmq-c
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-mingw-w64-x86-64-posix cmake unzip
+          curl -sSLo /tmp/npcap-sdk.zip https://npcap.com/dist/npcap-sdk-1.16.zip
+          unzip -q /tmp/npcap-sdk.zip -d /tmp/npcap-sdk
+          git clone -q --depth 1 --branch v0.18.0 https://github.com/alanxz/rabbitmq-c.git /tmp/rabbitmq-c
+          # só configura: gera rabbitmq-c/export.h
+          cmake -S /tmp/rabbitmq-c -B /tmp/rmq-build -DCMAKE_SYSTEM_NAME=Windows \
+            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc-posix -DENABLE_SSL_SUPPORT=OFF \
+            -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DBUILD_TOOLS=OFF
+
+      - name: Compilar fontes do agente (x86_64-w64-mingw32)
+        run: |
+          for f in src/main.c src/capture/capture.c src/analysis/analyzer.c \
+                   src/analysis/collector.c src/output/publisher.c src/output/cJSON.c \
+                   src/replay/replay.c src/core/ringbuf.c src/core/pipeline.c \
+                   src/platform/netif_win32.c; do
+            echo "== $f"
+            x86_64-w64-mingw32-gcc-posix -std=gnu11 -Wall -Wextra -Werror=implicit-function-declaration \
+              -D_WIN32_WINNT=0x0601 -Iinclude -I/tmp/npcap-sdk/Include \
+              -I/tmp/rabbitmq-c/include -I/tmp/rmq-build/include \
+              -c "$f" -o /dev/null
+          done
