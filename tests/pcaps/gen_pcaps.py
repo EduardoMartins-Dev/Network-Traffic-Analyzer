@@ -54,11 +54,14 @@ def dns_query(sport: int, qid: int, name: str) -> bytes:
 
 
 def write_pcap(name: str, packets, interval: float) -> None:
+    """packets: bytes, ou (bytes_capturados, tamanho_original) para simular
+    captura com snaplen curto (incl_len < orig_len)."""
     out = bytearray(struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1))
     for i, pkt in enumerate(packets):
+        pkt, orig_len = pkt if isinstance(pkt, tuple) else (pkt, len(pkt))
         ts = BASE_TS + i * interval
         sec, usec = int(ts), int(round((ts % 1) * 1_000_000))
-        out += struct.pack("<IIII", sec, usec, len(pkt), len(pkt)) + pkt
+        out += struct.pack("<IIII", sec, usec, len(pkt), orig_len) + pkt
     (OUT_DIR / name).write_bytes(bytes(out))
     print(f"{name}: {len(packets)} pacotes")
 
@@ -74,6 +77,21 @@ def main() -> None:
                [dns_query(50000 + i, i, hashlib.sha256(str(i).encode()).hexdigest()[:60]
                           + ".exfil.example")
                 for i in range(20)], 0.2)
+
+    # Malformados: nenhum pode gerar leitura fora do buffer nem detecção
+    # (gabarito vazio; roda sob ASan/UBSan no CI).
+    null = tcp(40000, 80, 0)                                 # null scan = 54 bytes
+    bad_ihl = bytearray(null); bad_ihl[14] = 0x4F            # IHL=15 (60 bytes) > pacote
+    short_ihl = bytearray(null); short_ihl[14] = 0x42        # IHL=2 (< 20 bytes)
+    dns_1byte = ipv4(17, struct.pack("!HHHH", 50000, 53, 9, 0) + b"\x00")
+    write_pcap("malformed.pcap", [
+        (null[:20], len(null)),                              # IPv4 cortado pelo snaplen
+        (null[:40], len(null)),                              # TCP cortado pelo snaplen
+        bytes(bad_ihl), bytes(bad_ihl), bytes(bad_ihl),
+        bytes(short_ihl), bytes(short_ihl), bytes(short_ihl),
+        dns_1byte,
+        (dns_1byte[:38], len(dns_1byte)),                    # UDP cortado
+    ], 0.1)
 
 
 if __name__ == "__main__":

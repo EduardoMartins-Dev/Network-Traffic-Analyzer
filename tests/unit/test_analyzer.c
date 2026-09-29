@@ -7,6 +7,7 @@
 #include "../../include/nta_net.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* ------------------------------------------------------------------------- *
@@ -146,6 +147,54 @@ static void test_reset_limpa_estado(void) {
     CHECK(detections("NULL_SCAN", ip) == 0);
 }
 
+/* Entrega só os `len` primeiros bytes num buffer do heap do tamanho exato:
+ * qualquer leitura além do fim vira erro do ASan (job sanitizers). */
+static int feed_exact(const uint8_t *pkt, int len) {
+    uint8_t *buf = malloc((size_t)len);
+    memcpy(buf, pkt, (size_t)len);
+    int r = analyze_packet(buf, len, T0);
+    free(buf);
+    return r;
+}
+
+static void test_pacotes_malformados(void) {
+    fresh();
+    const char *ip = "198.51.100.50";
+    uint8_t pkt[128];
+    nta_ipv4_hdr *iph = (nta_ipv4_hdr *)(pkt + NTA_ETH_HLEN);
+
+    /* TCP completo = 54 bytes; flags=0 (null scan) para que qualquer
+     * leitura "bem-sucedida" gerasse detecção. */
+    int full = build_ip(pkt, ip, NTA_PROTO_TCP, 20);
+    ((nta_tcp_hdr *)(pkt + NTA_ETH_HLEN + 20))->data_off = 5 << 4;
+
+    for (int i = 0; i < 3; i++) {
+        CHECK(feed_exact(pkt, NTA_ETH_HLEN + 10) == 0);   /* IPv4 cortado      */
+        CHECK(feed_exact(pkt, NTA_ETH_HLEN + 20 + 10) == 0); /* TCP cortado    */
+    }
+    CHECK(feed_exact(pkt, 0) == 0);
+    CHECK(feed_exact(pkt, 13) == 0);
+
+    iph->ver_ihl = 0x4F;                         /* IHL=15 (60 bytes) > pacote */
+    CHECK(feed_exact(pkt, full) == 0);
+    iph->ver_ihl = 0x42;                         /* IHL=2 (8 bytes) < mínimo 20 */
+    CHECK(feed_exact(pkt, full) == 0);
+    iph->ver_ihl = 0x45;
+
+    /* UDP para :53 com só 1 byte de payload DNS (flags ficam além do fim). */
+    int udp_full = build_ip(pkt, ip, NTA_PROTO_UDP, 8 + 1);
+    ((nta_udp_hdr *)(pkt + NTA_ETH_HLEN + 20))->dport = htons(53);
+    CHECK(feed_exact(pkt, udp_full) == 0);
+    CHECK(feed_exact(pkt, NTA_ETH_HLEN + 20 + 4) == 0);  /* UDP cortado */
+
+    /* ARP menor que os 42 bytes do reply */
+    uint8_t arp[30] = {0};
+    arp[12] = 0x08; arp[13] = 0x06;
+    CHECK(feed_exact(arp, sizeof(arp)) == 0);
+
+    CHECK(collector_count() == 0);               /* nada malformado vira alerta */
+}
+
 static void test_home_net(void) {
     CHECK(analyzer_add_home_cidr("300.1.1.1/8") == -1);
     CHECK(analyzer_add_home_cidr("10.0.0.0/33") == -1);
@@ -166,6 +215,7 @@ int main(void) {
     RUN(test_brute_force_espalhado_nao_dispara);
     RUN(test_kill_chain_completa);
     RUN(test_reset_limpa_estado);
+    RUN(test_pacotes_malformados);
     RUN(test_home_net);            /* por último: HOME_NET não é zerado pelo reset */
     TEST_EXIT();
 }
