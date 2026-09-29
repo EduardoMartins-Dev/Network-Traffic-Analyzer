@@ -16,7 +16,7 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header,
     (void)args;
 
     if (g_replay_mode) {
-        analyze_packet(packet, header->len);
+        analyze_packet(packet, header->len, header->ts.tv_sec);
         return;
     }
 

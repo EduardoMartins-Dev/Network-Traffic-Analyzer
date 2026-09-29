@@ -1,6 +1,14 @@
 # PCAPs de Teste — NTA v4.1
 
-Os arquivos `.pcap` devem ser obtidos de datasets públicos como:
+Os `.pcap` versionados aqui são **sintéticos e determinísticos**, gerados por
+`gen_pcaps.py` (só stdlib) com volume acima dos limiares do `analyzer.c`. São
+eles que o CI (`.github/workflows/test-ids.yml`) roda a cada push/PR:
+
+```bash
+python3 tests/pcaps/gen_pcaps.py   # regenera (mesmos bytes a cada execução)
+```
+
+Para validar com tráfego real, pcaps podem vir de datasets públicos como:
 - **CICIDS2017**: https://www.unb.ca/cic/datasets/ids-2017.html
 - **Malware Traffic Analysis**: https://www.malware-traffic-analysis.net/
 - **CTF captures**: datasets de competições públicas

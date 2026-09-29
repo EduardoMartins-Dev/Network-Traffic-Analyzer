@@ -6,6 +6,7 @@
 #include "../../include/replay.h"
 #include "../../include/collector.h"
 #include "../../include/capture.h"
+#include "../../include/analyzer.h"
 #include "../../include/cJSON.h"
 
 /* Suporte multiplataforma para leitura de diretório */
@@ -225,6 +226,7 @@ ReplayResult replay_file(const char *pcap_path, const Gabarito *g) {
     printf("[REPLAY] Processando: %s\n", pcap_path);
 
     collector_reset();
+    analyzer_reset();
     g_replay_mode = 1;
 
     /* Captura o timestamp do primeiro pacote para time_window relativo */

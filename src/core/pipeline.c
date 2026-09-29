@@ -195,7 +195,7 @@ static void *analysis_thread(void *arg) {
 
     while (1) {
         if (rb_pop(&g_rb_pkt, &slot) == 0) {
-            analyze_packet(slot.data, slot.len);
+            analyze_packet(slot.data, slot.len, slot.ts.tv_sec);
             continue;
         }
         if (atomic_load_explicit(&g_capture_done, memory_order_acquire)) break;

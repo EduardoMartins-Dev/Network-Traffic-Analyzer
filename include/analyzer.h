@@ -3,8 +3,15 @@
 
 #include <sys/types.h>   /* u_char (necessário antes de pcap.h no Fedora/glibc) */
 #include <pcap.h>
+#include <time.h>
 
-int analyze_packet(const u_char *packet, int length);
+/* `now` é o timestamp do pacote (pcap_pkthdr.ts), não o relógio de parede —
+ * assim janelas (brute force, EWMA, kill chain) valem também no replay. */
+int analyze_packet(const u_char *packet, int length, time_t now);
+
+/* Zera suspeitos e tabela ARP (HOME_NET é mantido). Usado entre pcaps do
+ * replay para que um arquivo não herde contadores do anterior. */
+void analyzer_reset(void);
 
 /* HOME_NET — lista de CIDRs cujo src_ip é ignorado no IP layer (não no ARP).
  * Pacotes saindo do próprio host viram tráfego promíscuo e sem skip viram

@@ -410,8 +410,15 @@ static void advance_kill_chain(Suspect *s, const char *attack, time_t now) {
  * FUNÇÕES AUXILIARES                                                        *
  * ========================================================================= */
 
-static void cleanup_suspects(void) {
-    time_t now = time(NULL);
+void analyzer_reset(void) {
+    memset(suspects, 0, sizeof(suspects));
+    suspect_count = 0;
+    last_cleanup  = 0;
+    memset(arp_table, 0, sizeof(arp_table));
+    arp_count = 0;
+}
+
+static void cleanup_suspects(time_t now) {
     if (difftime(now, last_cleanup) < CLEANUP_INTERVAL) return;
 
     int active = 0;
@@ -426,9 +433,7 @@ static void cleanup_suspects(void) {
     printf("[IDS] Limpeza de rotina. IPs rastreados: %d\n", suspect_count);
 }
 
-static Suspect *find_or_create_suspect(uint32_t ip) {
-    time_t now = time(NULL);
-
+static Suspect *find_or_create_suspect(uint32_t ip, time_t now) {
     for (int i = 0; i < suspect_count; i++) {
         if (suspects[i].ip == ip) {
             suspects[i].last_seen = now;
@@ -726,10 +731,11 @@ static const char *detect_icmp_flood(Suspect *s) {
  *
  * @param packet Buffer bruto do pacote (inclui Ethernet header)
  * @param length Tamanho total do pacote
+ * @param now    Timestamp do pacote (segundos)
  * @return 1 se ataque detectado, 0 se tráfego normal
  */
-int analyze_packet(const unsigned char *packet, int length) {
-    cleanup_suspects();
+int analyze_packet(const unsigned char *packet, int length, time_t now) {
+    cleanup_suspects(now);
 
     if (length < 14) return 0;
 
@@ -742,7 +748,7 @@ int analyze_packet(const unsigned char *packet, int length) {
             /* Extrai sender IP do ARP reply (offset 14+14=28) para o collector */
             struct in_addr arp_sender;
             memcpy(&arp_sender.s_addr, packet + 28, 4);
-            collector_record(arp_attack, inet_ntoa(arp_sender), time(NULL));
+            collector_record(arp_attack, inet_ntoa(arp_sender), now);
         }
         return arp_attack ? 1 : 0;
     }
@@ -758,10 +764,9 @@ int analyze_packet(const unsigned char *packet, int length) {
      * e CDN respondendo de múltiplas portas vira PORT_SCAN. */
     if (is_home_ip(src_ip)) return 0;
 
-    Suspect *s = find_or_create_suspect(src_ip);
+    Suspect *s = find_or_create_suspect(src_ip, now);
     if (!s) return 0;
 
-    time_t      now    = time(NULL);
     const char *attack = NULL;
 
     /* ------------------------------------------------------------------- *
