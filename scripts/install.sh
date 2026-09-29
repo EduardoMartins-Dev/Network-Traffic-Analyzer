@@ -144,14 +144,10 @@ if [ "$SERVER" -eq 1 ]; then
     fi
 fi
 
-# ----- .env padrão (Telegram opcional) ---------------------------------------
+# ----- .env (credenciais da stack; Telegram opcional) ------------------------
 if [ "$SERVER" -eq 1 ] && [ ! -f .env ]; then
-    log "criando .env (Telegram desabilitado por padrão)"
-    cat > .env <<'EOF'
-# Telegram alerting (opcional). Deixe vazio se não usar.
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_CHAT_ID=
-EOF
+    log "criando .env a partir de .env.example — troque as senhas antes de expor a stack"
+    cp .env.example .env
 fi
 
 # ----- build agente ----------------------------------------------------------

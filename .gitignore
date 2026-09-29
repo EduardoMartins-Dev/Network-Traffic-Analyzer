@@ -32,3 +32,6 @@ __pycache__/
 
 # Editor session backups
 *.save
+
+# Configuração local do Claude Code (não faz parte do projeto)
+/.claude/

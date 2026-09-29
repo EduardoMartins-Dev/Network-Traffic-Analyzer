@@ -32,7 +32,7 @@ Detailed install steps live in [README.md § Instalação](./README.md#instalaç
 
 ## Coding guidelines
 
-`CLAUDE.md` at the repo root captures the behavioral rules the project follows. The short version:
+The project follows four principles:
 
 1. **Think before coding.** State assumptions, surface tradeoffs.
 2. **Simplicity first.** No speculative abstractions, no premature configurability.
@@ -119,7 +119,7 @@ O `ROADMAP.MD` é a fonte da verdade do que está planejado. Se quiser pegar um 
 
 ### Diretrizes de código
 
-`CLAUDE.md` na raiz captura as regras comportamentais do projeto. Resumo:
+O projeto segue quatro princípios:
 
 1. **Pense antes de codar.** Explicite premissas, exponha tradeoffs.
 2. **Simplicidade primeiro.** Sem abstrações especulativas, sem configurabilidade prematura.
