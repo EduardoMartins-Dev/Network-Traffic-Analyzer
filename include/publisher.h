@@ -23,11 +23,14 @@ void publish_packet(const char *src_ip, int port, const char *proto, int bytes,
                     const char *mitre_technique);
 
 /* Serializa e envia um lote de eventos via AMQP em uma única mensagem.   *
- * Chamado pela thread de publicação. Thread-safe (mutex interno).         */
-void publisher_send_batch(const event_slot_t *batch, int count);
+ * Chamado pela thread de publicação. Thread-safe (mutex interno).         *
+ * Retorna -1 se o broker está fora (reconexão com backoff é interna) —    *
+ * o chamador mantém o lote e tenta de novo.                               */
+int publisher_send_batch(const event_slot_t *batch, int count);
 
 /* Publica um JSON de métricas em routing key separada                     *
- * (AGENT_METRICS_QUEUE, default "traffic_metrics"). Thread-safe.          */
-void publisher_send_metrics(const char *json_payload);
+ * (AGENT_METRICS_QUEUE, default "traffic_metrics"). Thread-safe.          *
+ * Retorna -1 se o broker está fora (métrica é descartável).              */
+int publisher_send_metrics(const char *json_payload);
 
 #endif /* PUBLISHER_H */

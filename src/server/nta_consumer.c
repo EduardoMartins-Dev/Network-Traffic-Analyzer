@@ -12,11 +12,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <unistd.h>
 #include <amqp_tcp_socket.h>
 #include <amqp_framing.h>
 
 #define MAX_FRAME_SIZE 131072
 #define AGENT_ID_MAX   127
+#define RECONNECT_MIN_SEC  1
+#define RECONNECT_MAX_SEC 30
+
+atomic_int g_nta_amqp_connected = 0;
+
+static int stop_requested(atomic_int *worker_stop) {
+    return nta_should_stop() ||
+           (worker_stop && atomic_load_explicit(worker_stop, memory_order_relaxed));
+}
 
 /* -------------------------------------------------------------------------- *
  * Helpers de erro librabbitmq                                                *
@@ -107,7 +117,24 @@ int nta_amqp_open(NtaAmqp *a, const NtaConfig *cfg,
     }
 
     a->connected = 1;
+    atomic_fetch_add_explicit(&g_nta_amqp_connected, 1, memory_order_relaxed);
     return 0;
+}
+
+int nta_amqp_open_retry(NtaAmqp *a, const NtaConfig *cfg, const char *queue,
+                        int prefetch_count, atomic_int *worker_stop,
+                        const char *tag) {
+    int delay = RECONNECT_MIN_SEC;
+    while (!stop_requested(worker_stop)) {
+        if (nta_amqp_open(a, cfg, queue, prefetch_count) == 0) return 0;
+
+        fprintf(stderr, "[%s] AMQP indisponível — nova tentativa em %ds\n",
+                tag, delay);
+        /* Dorme em fatias de 1s pra responder rápido a SIGTERM/scale-down. */
+        for (int i = 0; i < delay && !stop_requested(worker_stop); i++) sleep(1);
+        delay = (delay * 2 > RECONNECT_MAX_SEC) ? RECONNECT_MAX_SEC : delay * 2;
+    }
+    return -1;
 }
 
 /* -------------------------------------------------------------------------- *
@@ -129,8 +156,7 @@ int nta_amqp_consume_loop(NtaAmqp *a, const char *queue,
 
     char agent_id[AGENT_ID_MAX + 1];
 
-    while (!nta_should_stop() &&
-           !(worker_stop && atomic_load_explicit(worker_stop, memory_order_relaxed))) {
+    while (!stop_requested(worker_stop)) {
         amqp_envelope_t envelope;
         amqp_maybe_release_buffers(a->conn);
 
@@ -143,7 +169,7 @@ int nta_amqp_consume_loop(NtaAmqp *a, const char *queue,
             continue;
         }
         if (r.reply_type != AMQP_RESPONSE_NORMAL) {
-            fprintf(stderr, "[AMQP] consume falhou (reply=%d) — saindo do loop\n",
+            fprintf(stderr, "[AMQP] consume falhou (reply=%d) — conexão perdida\n",
                     r.reply_type);
             return -1;
         }
@@ -235,6 +261,7 @@ void nta_amqp_close(NtaAmqp *a) {
     if (a->connected) {
         amqp_channel_close(a->conn, a->channel, AMQP_REPLY_SUCCESS);
         amqp_connection_close(a->conn, AMQP_REPLY_SUCCESS);
+        atomic_fetch_sub_explicit(&g_nta_amqp_connected, 1, memory_order_relaxed);
     }
     amqp_destroy_connection(a->conn);
     a->conn = NULL;

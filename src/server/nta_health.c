@@ -11,6 +11,7 @@
 #include "../../include/nta_health.h"
 #include "../../include/nta_server.h"
 #include "../../include/nta_scaler.h"
+#include "../../include/nta_consumer.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -47,6 +48,7 @@ static void respond(int fd, int code, const char *ctype, const char *body) {
     size_t blen = strlen(body);
     const char *reason = (code == 200) ? "OK"
                        : (code == 404) ? "Not Found"
+                       : (code == 503) ? "Service Unavailable"
                        : "Internal Server Error";
     int n = snprintf(hdr, sizeof(hdr),
         "HTTP/1.0 %d %s\r\n"
@@ -67,6 +69,9 @@ static void route_health(int fd) {
     int backlog = atomic_load_explicit(&g_nta_pool_backlog, memory_order_relaxed);
     long uptime = (long)(time(NULL) - g_start_time);
     int stopping = atomic_load_explicit(&g_nta_stop, memory_order_relaxed);
+    int amqp     = atomic_load_explicit(&g_nta_amqp_connected, memory_order_relaxed);
+    /* Nenhum consumer conectado = broker fora: 503 pro healthcheck do Docker. */
+    int degraded = !stopping && amqp == 0;
 
     char body[512];
     snprintf(body, sizeof(body),
@@ -75,13 +80,14 @@ static void route_health(int fd) {
         "  \"version\": \"%s\",\n"
         "  \"uptime_s\": %ld,\n"
         "  \"workers\": %d,\n"
+        "  \"amqp_connected\": %d,\n"
         "  \"queue_backlog\": %d,\n"
         "  \"shutting_down\": %s\n"
         "}\n",
-        stopping ? "draining" : "ok",
-        VERSION_STR, uptime, pool, backlog,
+        stopping ? "draining" : degraded ? "degraded" : "ok",
+        VERSION_STR, uptime, pool, amqp, backlog,
         stopping ? "true" : "false");
-    respond(fd, 200, "application/json", body);
+    respond(fd, degraded ? 503 : 200, "application/json", body);
 }
 
 static void route_metrics(int fd) {
@@ -89,6 +95,7 @@ static void route_metrics(int fd) {
     int backlog = atomic_load_explicit(&g_nta_pool_backlog, memory_order_relaxed);
     long uptime = (long)(time(NULL) - g_start_time);
     int stopping = atomic_load_explicit(&g_nta_stop, memory_order_relaxed);
+    int amqp     = atomic_load_explicit(&g_nta_amqp_connected, memory_order_relaxed);
 
     char body[1024];
     snprintf(body, sizeof(body),
@@ -98,13 +105,16 @@ static void route_metrics(int fd) {
         "# HELP nta_workers_active Current traffic worker count\n"
         "# TYPE nta_workers_active gauge\n"
         "nta_workers_active %d\n"
+        "# HELP nta_amqp_connected Consumers with an open AMQP connection\n"
+        "# TYPE nta_amqp_connected gauge\n"
+        "nta_amqp_connected %d\n"
         "# HELP nta_queue_backlog RabbitMQ traffic_queue depth (from scaler)\n"
         "# TYPE nta_queue_backlog gauge\n"
         "nta_queue_backlog %d\n"
         "# HELP nta_shutting_down 1 if SIGTERM received\n"
         "# TYPE nta_shutting_down gauge\n"
         "nta_shutting_down %d\n",
-        uptime, pool, backlog, stopping);
+        uptime, pool, amqp, backlog, stopping);
     respond(fd, 200, "text/plain; version=0.0.4", body);
 }
 

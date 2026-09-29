@@ -265,42 +265,45 @@ static void *worker_main(void *arg) {
         return NULL;
     }
 
+    char tag[16];
+    snprintf(tag, sizeof(tag), "W-%d", w->worker_id);
+
     /* Prefetch baixo por worker pra distribuir trabalho de forma justa.
-     * Total em flight: NTA_WORKERS * prefetch = 4 * 20 = 80. */
-    if (nta_amqp_open(&w->amqp, w->cfg, w->cfg->queue_name, 20) != 0) {
-        fprintf(stderr, "[W-%d] AMQP open falhou\n", w->worker_id);
-        nta_influx_close(&w->influx);
-        return NULL;
-    }
-
-    /* Pré-declara narrator_queue no mesmo canal — idempotente. Se falhar,
-     * desabilita republish neste worker (min_score=0) mas segue consumindo. */
-    int can_narrate = 1;
-    if (w->cfg->narrator_min_score > 0 && w->cfg->narrator_queue) {
-        if (nta_amqp_declare_queue(&w->amqp, w->cfg->narrator_queue) != 0) {
-            fprintf(stderr, "[W-%d] declare narrator_queue falhou — sem republish\n",
-                    w->worker_id);
-            can_narrate = 0;
+     * Total em flight: NTA_WORKERS * prefetch = 4 * 20 = 80.
+     * Loop: (re)conecta com backoff; sai só em stop global ou scale-down. */
+    while (nta_amqp_open_retry(&w->amqp, w->cfg, w->cfg->queue_name, 20,
+                               &w->stop, tag) == 0) {
+        /* Pré-declara narrator_queue no mesmo canal — idempotente. Se falhar,
+         * desabilita republish neste worker (min_score=0) mas segue consumindo. */
+        int can_narrate = 1;
+        if (w->cfg->narrator_min_score > 0 && w->cfg->narrator_queue) {
+            if (nta_amqp_declare_queue(&w->amqp, w->cfg->narrator_queue) != 0) {
+                fprintf(stderr, "[W-%d] declare narrator_queue falhou — sem republish\n",
+                        w->worker_id);
+                can_narrate = 0;
+            }
         }
+
+        fprintf(stderr, "[W-%d] pronto%s.\n", w->worker_id,
+                can_narrate ? " (+narrator republish)" : "");
+
+        TrafficCtx ctx = {
+            .inf            = &w->influx,
+            .geo            = w->geo,
+            .ioc            = w->ioc,
+            .abuse          = w->abuse,
+            .amqp           = &w->amqp,
+            .narrator_queue = w->cfg->narrator_queue,
+            .min_score      = can_narrate ? w->cfg->narrator_min_score : 0,
+            .abuse_min      = can_narrate ? w->abuse_min : 0,
+        };
+        int rc = nta_amqp_consume_loop(&w->amqp, w->cfg->queue_name,
+                                       traffic_handler, &ctx, &w->stop);
+        nta_amqp_close(&w->amqp);
+        if (rc == 0) break;
+        fprintf(stderr, "[W-%d] reconectando...\n", w->worker_id);
     }
 
-    fprintf(stderr, "[W-%d] pronto%s.\n", w->worker_id,
-            can_narrate ? " (+narrator republish)" : "");
-
-    TrafficCtx ctx = {
-        .inf            = &w->influx,
-        .geo            = w->geo,
-        .ioc            = w->ioc,
-        .abuse          = w->abuse,
-        .amqp           = &w->amqp,
-        .narrator_queue = w->cfg->narrator_queue,
-        .min_score      = can_narrate ? w->cfg->narrator_min_score : 0,
-        .abuse_min      = can_narrate ? w->abuse_min : 0,
-    };
-    nta_amqp_consume_loop(&w->amqp, w->cfg->queue_name,
-                           traffic_handler, &ctx, &w->stop);
-
-    nta_amqp_close(&w->amqp);
     nta_influx_close(&w->influx);
     fprintf(stderr, "[W-%d] encerrado.\n", w->worker_id);
     return NULL;
@@ -316,19 +319,17 @@ static void *metrics_worker_main(void *arg) {
         fprintf(stderr, "[METRICS] InfluxDB open falhou\n");
         return NULL;
     }
-    if (nta_amqp_open(&w->amqp, w->cfg, w->cfg->metrics_queue, 5) != 0) {
-        fprintf(stderr, "[METRICS] AMQP open falhou\n");
-        nta_influx_close(&w->influx);
-        return NULL;
+    MetricsCtx ctx = { .inf = &w->influx };
+    while (nta_amqp_open_retry(&w->amqp, w->cfg, w->cfg->metrics_queue, 5,
+                               NULL, "METRICS") == 0) {
+        fprintf(stderr, "[METRICS] pronto (queue=%s).\n", w->cfg->metrics_queue);
+        int rc = nta_amqp_consume_loop(&w->amqp, w->cfg->metrics_queue,
+                                       metrics_handler, &ctx, NULL);
+        nta_amqp_close(&w->amqp);
+        if (rc == 0) break;
+        fprintf(stderr, "[METRICS] reconectando...\n");
     }
 
-    fprintf(stderr, "[METRICS] pronto (queue=%s).\n", w->cfg->metrics_queue);
-
-    MetricsCtx ctx = { .inf = &w->influx };
-    nta_amqp_consume_loop(&w->amqp, w->cfg->metrics_queue,
-                           metrics_handler, &ctx, NULL);
-
-    nta_amqp_close(&w->amqp);
     nta_influx_close(&w->influx);
     fprintf(stderr, "[METRICS] encerrado.\n");
     return NULL;
@@ -351,22 +352,19 @@ static void *narrator_worker_main(void *arg) {
         nta_influx_close(&w->influx);
         return NULL;
     }
-    if (nta_amqp_open(&w->amqp, w->cfg, w->cfg->narrator_queue, 1) != 0) {
-        fprintf(stderr, "[NARR] AMQP open falhou\n");
-        nta_narrator_close(&nar);
-        nta_influx_close(&w->influx);
-        return NULL;
-    }
-
-    fprintf(stderr, "[NARR] pronto (queue=%s backend=%s).\n",
-            w->cfg->narrator_queue, nta_narrator_backend(w->ncfg));
-
     NarratorCtx ctx = { .inf = &w->influx, .nar = &nar, .whois = w->whois,
                         .ncfg = w->ncfg };
-    nta_amqp_consume_loop(&w->amqp, w->cfg->narrator_queue,
-                           narrator_handler, &ctx, NULL);
+    while (nta_amqp_open_retry(&w->amqp, w->cfg, w->cfg->narrator_queue, 1,
+                               NULL, "NARR") == 0) {
+        fprintf(stderr, "[NARR] pronto (queue=%s backend=%s).\n",
+                w->cfg->narrator_queue, nta_narrator_backend(w->ncfg));
+        int rc = nta_amqp_consume_loop(&w->amqp, w->cfg->narrator_queue,
+                                       narrator_handler, &ctx, NULL);
+        nta_amqp_close(&w->amqp);
+        if (rc == 0) break;
+        fprintf(stderr, "[NARR] reconectando...\n");
+    }
 
-    nta_amqp_close(&w->amqp);
     nta_narrator_close(&nar);
     nta_influx_close(&w->influx);
     fprintf(stderr, "[NARR] encerrado.\n");

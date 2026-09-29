@@ -30,6 +30,7 @@
 #define DEFAULT_BATCH_TIMEOUT_MS 100
 #define DEFAULT_METRICS_INTERVAL  10
 #define IDLE_SLEEP_NS         100000   /* 100 µs entre polls do ring buffer */
+#define PUBLISH_RETRY_SLEEP_NS 100000000L /* 100 ms entre tentativas c/ broker fora */
 
 /* ========================================================================= *
  * ESTADO GLOBAL                                                             *
@@ -241,7 +242,18 @@ static void *publish_thread(void *arg) {
         int drained   = atomic_load_explicit(&g_analysis_done, memory_order_acquire);
 
         if (filled == batch_size || timed_out || (drained && filled > 0)) {
-            publisher_send_batch(batch, filled);
+            if (publisher_send_batch(batch, filled) != 0) {
+                /* Broker fora: segura o lote e para de consumir rb_evt — os
+                 * eventos acumulam a montante (overflow vira métrica). No
+                 * shutdown descarta em vez de travar esperando o broker. */
+                if (drained) {
+                    fprintf(stderr, "[PIPE] Broker indisponivel no shutdown — "
+                            "%d eventos descartados.\n", filled);
+                    break;
+                }
+                idle_sleep(PUBLISH_RETRY_SLEEP_NS);
+                continue;
+            }
             atomic_fetch_add_explicit(&g_batches_sent, 1, memory_order_relaxed);
             atomic_fetch_add_explicit(&g_events_sent, (uint64_t)filled,
                                       memory_order_relaxed);
