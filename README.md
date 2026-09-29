@@ -99,7 +99,7 @@ flowchart LR
 
     subgraph Server["Servidor Central (Docker)"]
         B{RabbitMQ}
-        C[data_ingestor.py]
+        C[nta-server C]
         D[(InfluxDB)]
         E[Grafana]
     end
@@ -116,7 +116,7 @@ flowchart LR
 |---|---|---|
 | **Agente (C)** | Host monitorado | Captura, detecta (EWMA + kill chain), publica telemetria |
 | **RabbitMQ** | Servidor central | Buffer de mensagens durável |
-| **data_ingestor.py** | Servidor central | RabbitMQ → InfluxDB com enriquecimento GeoIP |
+| **nta-server (C)** | Servidor central (container) | RabbitMQ → InfluxDB com enriquecimento GeoIP/ASN, IoC, AbuseIPDB, WHOIS e narrativa LLM |
 | **InfluxDB** | Servidor central | Armazena séries temporais |
 | **Grafana** | Servidor central | Dashboards e alertas em tempo real |
 
@@ -134,7 +134,8 @@ Network-Traffic-Analyzer/
 │   ├── pipeline.h        # Pipeline multi-thread e slots SPSC (v5.0)
 │   ├── publisher.h       # Cliente AMQP + batch sender + métricas (v5.0)
 │   ├── ringbuf.h         # Ring buffer SPSC lock-free (v5.0)
-│   └── replay.h          # Framework de replay e test (v4.1)
+│   ├── replay.h          # Framework de replay e test (v4.1)
+│   └── nta_*.h           # Interfaces do nta-server (v7.0+)
 ├── src/
 │   ├── analysis/
 │   │   ├── analyzer.c    # IDS: 10 detectores + EWMA + Kill Chain
@@ -144,8 +145,8 @@ Network-Traffic-Analyzer/
 │   ├── core/
 │   │   ├── ringbuf.c     # SPSC lock-free (C11 atomics)
 │   │   └── pipeline.c    # 4 threads: capture / analysis / publish / metrics
-│   ├── ingestor/
-│   │   └── data_ingestor.py   # Consome telemetria + métricas (v5.0)
+│   ├── server/           # nta-server: consumer AMQP, InfluxDB, GeoIP, IoC,
+│   │                     #   AbuseIPDB, WHOIS, narrator Groq, scaler, /health
 │   ├── output/
 │   │   ├── cJSON.c
 │   │   └── publisher.c   # Batch AMQP com array JSON + routing key metrics
@@ -153,18 +154,30 @@ Network-Traffic-Analyzer/
 │   │   └── replay.c      # --replay / --replay-dir / gabarito JSON
 │   └── main.c
 ├── tests/
-│   └── pcaps/            # Gabaritos JSON por tipo de ataque
+│   └── pcaps/            # PCAPs sintéticos + gabaritos JSON (gen_pcaps.py)
 ├── scripts/
-│   ├── server-up.sh      # Sobe compose + venv + ingestor em um comando
-│   └── smoke-test.sh     # Build + replay + sniff curto (v5.0)
+│   ├── up.sh / down.sh   # Sobe/derruba a stack do servidor (containers)
+│   ├── quickstart.sh     # install + up + smoke em um comando
+│   ├── install.sh        # Dependências por SO + build do agente
+│   ├── smoke-test.sh     # Build + replay + sniff curto (v5.0)
+│   ├── gen_agent_cert.sh # CA + certs mTLS (broker e agentes)
+│   ├── provision_agent.sh# User RabbitMQ + cert + env de um agente
+│   ├── influx_retention.sh # Retention 7d/90d + downsampling
+│   ├── ctl.py / agent_ctl.py # Control plane multi-agente (pika)
+│   └── dash_gen.py       # Gera dashboard Grafana via LLM
 ├── deploy/
+│   ├── nta-server.Dockerfile # Imagem do nta-server (usada pelo compose)
 │   ├── agent.env.example # Template de variáveis de ambiente do agente
-│   └── agent.service     # Unit systemd com capabilities + hardening
+│   ├── agent.service     # Unit systemd com capabilities + hardening
+│   ├── rabbitmq/         # rabbitmq.conf (TLS/mTLS) + plugins
+│   └── secrets/          # *.env.example (Groq, AbuseIPDB); certs gerados
+├── grafana/              # Provisioning (datasource, dashboards, alertas)
 ├── .github/
 │   └── workflows/
-│       └── test-ids.yml  # CI/CD: build + replay, falha se score < 80%
+│       └── test-ids.yml  # CI: build + replay (score ≥ 80%) + imagem do servidor
 ├── docker-compose.yml
-├── requirements.txt
+├── .env.example          # Credenciais da stack (copiar para .env)
+├── requirements.txt      # pika — só para scripts/ctl.py e agent_ctl.py
 ├── CMakeLists.txt
 └── README.md
 ```
@@ -183,7 +196,7 @@ make quickstart
 ```
 
 Equivale a `install.sh` (instala dependências + builda agente) → `up.sh` (sobe
-stack docker + ingestor) → `smoke-test.sh` (valida com replay). Idempotente.
+a stack docker, incluindo o nta-server) → `smoke-test.sh` (valida com replay). Idempotente.
 
 Outros atalhos:
 
@@ -205,7 +218,7 @@ Fedora/RHEL/CentOS (dnf), Arch (pacman), FreeBSD (pkg) e macOS (brew).
 
 Dois papéis, tipicamente em máquinas separadas:
 
-- **Servidor Central** — agrega eventos de múltiplos agentes (RabbitMQ + InfluxDB + Grafana + nta-server em C + narrator Python via Groq).
+- **Servidor Central** — agrega eventos de múltiplos agentes (RabbitMQ + InfluxDB + Grafana + nta-server em C com narrator via Groq), tudo em containers.
 - **Agente Sensor** — captura tráfego local e publica no servidor (binário C).
 
 As dependências não se sobrepõem: servidor não precisa de `libpcap` nem
@@ -454,15 +467,14 @@ sudo ./build/NetworkTrafficAnalyzer eth0
 
 ## AI Narrator (v6.0)
 
-Quando o `nta-server` recebe um evento com `kc_score >= NARRATOR_MIN_SCORE`, ele republica o evento em `narrator_queue`. O consumer `narrator.py` (standalone) monta o prompt e chama a Groq Cloud API pra gerar narrativa em PT-BR (o que aconteceu, por que é crítico, ação recomendada, MITRE). O texto vai pro InfluxDB como `incident_narrative` e aparece no painel "Narrativas IA" do dashboard.
+Quando o `nta-server` recebe um evento com `kc_score >= NARRATOR_MIN_SCORE`, ele republica o evento em `narrator_queue`. O worker narrator (embutido no `nta-server`, em C) monta o prompt e chama a Groq Cloud API pra gerar narrativa em PT-BR (o que aconteceu, por que é crítico, ação recomendada, MITRE). O texto vai pro InfluxDB como `incident_narrative` e aparece no painel "Narrativas IA" do dashboard.
 
 | Variável | Default | Descrição |
 |---|---|---|
-| `NARRATOR_ENABLED` | `1` | `0` desliga o narrator |
 | `NARRATOR_MIN_SCORE` | `80` | Threshold de `kc_score` pra disparar narrativa |
 | `NARRATOR_TIMEOUT` | `8` | Timeout da chamada HTTP ao Groq (segundos) |
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | Modelo Groq |
-| `GROQ_API_KEY` | _(nenhum)_ | Lido também de `deploy/secrets/groq.env` |
+| `GROQ_API_KEY` | _(nenhum)_ | Lido também de `deploy/secrets/groq.env`. Sem ele o narrator fica desligado |
 
 **Setup:**
 ```bash
