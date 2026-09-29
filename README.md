@@ -792,12 +792,29 @@ Mensagens de **métricas** (fila `traffic_metrics`):
 
 Os arquivos `.pcap` de teste devem ser obtidos de datasets públicos (ver [tests/pcaps/README.md](tests/pcaps/README.md)).
 
+### Testes unitários
+
+Em `tests/unit/` (harness próprio, sem dependências), rodados pelo `ctest`:
+
+| Teste | Cobre |
+|---|---|
+| `test_ringbuf` | FIFO, overflow, wrap-around e estresse SPSC com 2 threads (2M itens) |
+| `test_config` | Parser do `--config`: BOM, CRLF, aspas, valor vazio, precedência do ambiente |
+| `test_analyzer` | Detecções com timestamps controlados: janela do brute force, progressão e score da kill chain, HOME_NET |
+| `test_whois` | Parser WHOIS do nta-server (ARIN, RIPE, LACNIC, referral IANA) — só Linux |
+
+```bash
+cmake -S . -B build && cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
 ### CI/CD
 
 O workflow `.github/workflows/test-ids.yml` executa a cada push/PR:
-1. Compila o agente
-2. Roda `--replay-dir tests/pcaps/`
-3. Falha automaticamente se o score agregado cair abaixo de 80%
+1. Linux: compila, roda os testes unitários e o replay (`--replay-dir tests/pcaps/`, falha se o score < 80%)
+2. Sanitizers: testes + replay sob ASan/UBSan — qualquer acesso inválido ou comportamento indefinido reprova
+3. Windows (MSYS2): compila o `.exe` estático, roda os testes unitários nativamente e compila o instalador
+4. Imagem Docker do `nta-server`: build + smoke do `/health`
 
 ---
 
