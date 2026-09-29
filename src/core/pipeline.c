@@ -44,6 +44,7 @@ static volatile sig_atomic_t g_running = 1;
 /* Flags de coordenação de shutdown — propagam vazio dos buffers a jusante */
 static _Atomic int g_capture_done  = 0;
 static _Atomic int g_analysis_done = 0;
+static _Atomic int g_capture_error = 0;   /* interface não abriu → rc != 0 */
 
 /* Contadores observados pelas métricas */
 static _Atomic uint64_t g_batches_sent = 0;
@@ -143,7 +144,8 @@ static void *capture_thread(void *arg) {
     g_pcap_handle = pcap_open_live(iface, SNAP_LEN, 1, 1000, errbuf);
     if (!g_pcap_handle) {
         fprintf(stderr, "[PIPE] Erro ao abrir %s: %s\n", iface, errbuf);
-        g_running = 0;
+        g_running       = 0;
+        g_capture_error = 1;
         goto done;
     }
 
@@ -337,5 +339,5 @@ int pipeline_run(const char *iface) {
     rb_destroy(&g_rb_pkt);
     rb_destroy(&g_rb_evt);
 
-    return 0;
+    return g_capture_error ? -1 : 0;
 }

@@ -50,7 +50,8 @@ typedef struct {
 
 /* Inicializa ring buffers e inicia as 4 threads (captura, análise,        *
  * publicação e métricas). Bloqueia até `pipeline_request_stop()` ser      *
- * chamado — tipicamente via SIGINT/SIGTERM.                                */
+ * chamado — tipicamente via SIGINT/SIGTERM ou stop do Windows Service.    *
+ * Retorna -1 se a interface não pôde ser aberta, 0 caso contrário.        */
 int  pipeline_run(const char *iface);
 
 /* Sinaliza shutdown gracioso. Seguro para chamar de signal handler.      */

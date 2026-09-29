@@ -377,8 +377,25 @@ cmake --build build
 ```
 
 Não precisa ser Administrador, a menos que o Npcap tenha sido instalado com
-"Restrict Npcap driver's access to Administrators only". Fora do terminal
-UCRT64, o `.exe` precisa das DLLs de `C:\msys64\ucrt64\bin` no `PATH`.
+"Restrict Npcap driver's access to Administrators only". O `.exe` é linkado
+estático (rabbitmq-c, OpenSSL, winpthreads): só depende do Npcap instalado.
+
+#### Windows Service
+
+O agente roda como serviço `NTAAgent` (início automático, conta LocalSystem,
+reinício automático em falha). Configuração num arquivo `CHAVE=VALOR` com as
+mesmas chaves de `deploy/agent.env.example` — inclusive `AGENT_IFACE`.
+
+```powershell
+# PowerShell como Administrador
+mkdir C:\ProgramData\NTA
+copy deploy\agent.env.example C:\ProgramData\NTA\agent.conf   # edite host/token/AGENT_IFACE
+.\build\NetworkTrafficAnalyzer.exe --install-service --config C:\ProgramData\NTA\agent.conf
+sc.exe start NTAAgent
+Get-Content C:\ProgramData\NTA\agent.log -Wait                 # log (AGENT_LOG_FILE)
+sc.exe stop NTAAgent                                           # shutdown gracioso
+.\build\NetworkTrafficAnalyzer.exe --uninstall-service
+```
 
 ---
 

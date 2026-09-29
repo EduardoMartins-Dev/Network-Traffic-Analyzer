@@ -23,8 +23,13 @@
 static void print_usage(const char *prog) {
     fprintf(stderr,
         "Uso:\n"
-        "  %s <interface>                          — captura ao vivo\n"
+        "  %s [--config <arq>] [<interface>]       — captura ao vivo\n"
+        "        (sem <interface>: usa AGENT_IFACE do ambiente/config)\n"
         "  %s --list-interfaces                    — lista interfaces de captura\n"
+#ifdef _WIN32
+        "  --install-service --config <arq> [<interface>] — instala serviço NTAAgent\n"
+        "  --uninstall-service                     — remove o serviço\n"
+#endif
         "  %s --replay <file.pcap>                 — replay de arquivo\n"
         "        [--expect <gabarito.json>]         — valida detecções\n"
         "  %s --replay-dir <diretório>             — replay de diretório\n"
@@ -45,6 +50,17 @@ AgentArgs parse_args(int argc, char *argv[]) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--list-interfaces") == 0) {
             args.mode = MODE_LIST_IFACES;
+        } else if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+            args.config_file = argv[++i];
+        } else if (strcmp(argv[i], "--service") == 0) {
+            args.service = 1;
+        } else if (strcmp(argv[i], "--install-service") == 0) {
+            args.mode = MODE_SERVICE_INSTALL;
+        } else if (strcmp(argv[i], "--uninstall-service") == 0) {
+            args.mode = MODE_SERVICE_UNINSTALL;
+        } else if ((args.mode == MODE_LIVE || args.mode == MODE_SERVICE_INSTALL) &&
+                   argv[i][0] != '-') {
+            args.iface = argv[i];
         } else if (strcmp(argv[i], "--replay") == 0 && i + 1 < argc) {
             args.mode      = MODE_REPLAY_FILE;
             args.pcap_file = argv[++i];
@@ -55,8 +71,6 @@ AgentArgs parse_args(int argc, char *argv[]) {
             args.expect_file = argv[++i];
         } else if (strcmp(argv[i], "--report") == 0 && i + 1 < argc) {
             args.report_file = argv[++i];
-        } else if (args.mode == MODE_LIVE && argv[i][0] != '-') {
-            args.iface = argv[i];
         } else {
             fprintf(stderr, "Argumento desconhecido: %s\n", argv[i]);
             print_usage(argv[0]);
@@ -64,11 +78,8 @@ AgentArgs parse_args(int argc, char *argv[]) {
         }
     }
 
-    if (args.mode == MODE_LIVE && !args.iface) {
-        print_usage(argv[0]);
-        exit(1);
-    }
-
+    /* Interface ausente no modo live é resolvida em main() via
+     * AGENT_IFACE, depois de carregar o --config. */
     return args;
 }
 

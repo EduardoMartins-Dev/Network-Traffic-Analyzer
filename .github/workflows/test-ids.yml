@@ -101,3 +101,10 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNPCAP_SDK_DIR="$(cygpath -m /tmp/npcap-sdk)"
           cmake --build build
           ls -la build/NetworkTrafficAnalyzer.exe
+
+      - name: .exe autocontido (sem DLLs do MSYS2 — exigido pelo Windows Service)
+        run: |
+          ldd build/NetworkTrafficAnalyzer.exe
+          if ldd build/NetworkTrafficAnalyzer.exe | grep -i '/ucrt64/'; then
+            echo "::error::.exe depende de DLLs do MSYS2"; exit 1
+          fi

@@ -16,6 +16,7 @@ add_executable(NetworkTrafficAnalyzer
         src/replay/replay.c
         src/core/ringbuf.c
         src/core/pipeline.c
+        src/core/config.c
 )
 
 if(WIN32)
@@ -24,9 +25,18 @@ if(WIN32)
     # pipeline usa atômicos C11 (<stdatomic.h>), ainda experimentais no MSVC.
     # Threads/tempo POSIX vêm do winpthreads do MinGW; requer Npcap SDK.
     # -------------------------------------------------------------------------
-    target_sources(NetworkTrafficAnalyzer PRIVATE src/platform/netif_win32.c)
+    target_sources(NetworkTrafficAnalyzer PRIVATE
+        src/platform/netif_win32.c
+        src/platform/service_win32.c
+    )
     # inet_pton/inet_ntop e GetAdaptersAddresses.OnLinkPrefixLength: Windows 7+
-    target_compile_definitions(NetworkTrafficAnalyzer PRIVATE _WIN32_WINNT=0x0601)
+    # AMQP_STATIC: rabbitmq-c linkado estático (sem dllimport nos headers).
+    target_compile_definitions(NetworkTrafficAnalyzer PRIVATE
+        _WIN32_WINNT=0x0601 AMQP_STATIC)
+
+    # .exe autocontido: o serviço roda como LocalSystem, sem as DLLs do MSYS2
+    # no PATH. Só wpcap.dll/Packet.dll (Npcap, em System32) ficam dinâmicas.
+    target_link_options(NetworkTrafficAnalyzer PRIVATE -static)
 
     set(NPCAP_SDK_DIR "C:/Npcap-sdk" CACHE PATH "Diretorio raiz do Npcap SDK")
 
@@ -41,9 +51,13 @@ if(WIN32)
     target_link_libraries(NetworkTrafficAnalyzer PRIVATE
         "${NPCAP_LIB_DIR}/wpcap.lib"
         "${NPCAP_LIB_DIR}/Packet.lib"
+        rabbitmq
+        ssl
+        crypto
         Ws2_32
         Iphlpapi
-        rabbitmq
+        Crypt32
+        Bcrypt
         pthread
     )
 else()
