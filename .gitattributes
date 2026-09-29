@@ -1,0 +1,12 @@
+# Arquivos executados/lidos em Linux (host, WSL ou containers) precisam de LF,
+# mesmo quando o checkout é feito no Windows com core.autocrlf=true.
+*.sh              text eol=lf
+*.py              text eol=lf
+*.service         text eol=lf
+*.env.example     text eol=lf
+deploy/rabbitmq/* text eol=lf
+grafana/**/*.yaml text eol=lf
+docker-compose.yml text eol=lf
+
+*.pcap            binary
+*.mmdb            binary

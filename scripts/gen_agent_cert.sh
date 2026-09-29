@@ -12,6 +12,9 @@
 # RabbitMQ usa `ssl_cert_login_from = common_name` → o CN do cliente vira o user.
 
 set -eu
+# Git Bash (MSYS) converte "/CN=..." em caminho Windows e quebra o -subj do openssl.
+# Exclui só esse prefixo — os caminhos de arquivo continuam sendo convertidos.
+export MSYS2_ARG_CONV_EXCL="/CN="
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TLS_DIR="$ROOT_DIR/deploy/secrets/tls"
 mkdir -p "$TLS_DIR"

@@ -12,6 +12,8 @@
 #   INFLUX_WARM_SECONDS (default: 7776000  = 90d)
 
 set -eu
+# Git Bash (MSYS) converteria "/tmp/..." em caminho Windows no docker exec.
+export MSYS_NO_PATHCONV=1
 
 CONTAINER="${INFLUX_CONTAINER:-influxdb}"
 ORG="${INFLUX_ORG:-cybersecurity}"
