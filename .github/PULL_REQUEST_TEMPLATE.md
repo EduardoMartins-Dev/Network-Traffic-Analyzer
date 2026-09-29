@@ -67,7 +67,7 @@ PT: Passos concretos que rodou. Cole linhas de log ou output relevante. Nome dos
 
 - [ ] Commit follows Conventional Commits / Commit segue Conventional Commits
 - [ ] No new compiler warnings on the touched path / Sem warnings novos no caminho tocado
-- [ ] CLAUDE.md guidelines respected (no speculative scope) / Diretrizes do CLAUDE.md respeitadas
+- [ ] Scope limited to the task (no speculative changes) / Escopo limitado à tarefa (sem mudanças especulativas)
 - [ ] Docs updated if user-visible behavior changed / Docs atualizadas se comportamento visível mudou
 - [ ] No secrets, tokens, or PII committed / Sem secrets, tokens ou PII commitados
 - [ ] `.gitignore` updated if new artifact dirs introduced / `.gitignore` atualizado se introduziu novos diretórios

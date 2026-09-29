@@ -1,6 +1,6 @@
-/* Testes do carregador de --config (src/core/config.c). */
+/* Testes do carregador de --config (src/agent/core/config.c). */
 #include "test.h"
-#include "../../include/config.h"
+#include "config.h"
 
 #include <stdlib.h>
 

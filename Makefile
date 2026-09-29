@@ -33,7 +33,7 @@ quickstart:
 	./scripts/quickstart.sh
 
 build:
-	cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+	cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DNTA_BUILD_SERVER=OFF
 	cmake --build build -j$$(nproc 2>/dev/null || echo 2)
 
 up:

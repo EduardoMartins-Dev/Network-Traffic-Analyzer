@@ -6,8 +6,8 @@
  *  list compartilham o mesmo ponteiro.                                      *
  * ========================================================================= */
 
-#include "../../include/nta_ioc.h"
-#include "../../include/cJSON.h"
+#include "nta_ioc.h"
+#include "cJSON.h"
 
 #include <stdio.h>
 #include <stdlib.h>

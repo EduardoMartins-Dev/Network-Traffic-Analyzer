@@ -19,17 +19,17 @@
 #include <signal.h>
 #include <unistd.h>
 #include <pthread.h>
-#include "../../include/nta_server.h"
-#include "../../include/nta_consumer.h"
-#include "../../include/nta_influx.h"
-#include "../../include/nta_geoip.h"
-#include "../../include/nta_ioc.h"
-#include "../../include/nta_abuse.h"
-#include "../../include/nta_whois.h"
-#include "../../include/nta_narrator.h"
-#include "../../include/nta_health.h"
-#include "../../include/nta_scaler.h"
-#include "../../include/cJSON.h"
+#include "nta_server.h"
+#include "nta_consumer.h"
+#include "nta_influx.h"
+#include "nta_geoip.h"
+#include "nta_ioc.h"
+#include "nta_abuse.h"
+#include "nta_whois.h"
+#include "nta_narrator.h"
+#include "nta_health.h"
+#include "nta_scaler.h"
+#include "cJSON.h"
 
 atomic_int g_nta_stop = 0;
 

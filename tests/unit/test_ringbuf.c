@@ -1,6 +1,6 @@
-/* Testes do ring buffer SPSC lock-free (src/core/ringbuf.c). */
+/* Testes do ring buffer SPSC lock-free (src/agent/core/ringbuf.c). */
 #include "test.h"
-#include "../../include/ringbuf.h"
+#include "ringbuf.h"
 
 #include <pthread.h>
 #include <stdint.h>

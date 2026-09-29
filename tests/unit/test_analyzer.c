@@ -1,10 +1,10 @@
-/* Testes do motor IDS (src/analysis/analyzer.c) com pacotes sintéticos e
+/* Testes do motor IDS (src/agent/analysis/analyzer.c) com pacotes sintéticos e
  * timestamps controlados — o analyzer usa o horário do pacote, então as
  * janelas (brute force, kill chain) são testáveis sem esperar tempo real. */
 #include "test.h"
-#include "../../include/analyzer.h"
-#include "../../include/collector.h"
-#include "../../include/nta_net.h"
+#include "analyzer.h"
+#include "collector.h"
+#include "nta_net.h"
 
 #include <stdint.h>
 #include <stdlib.h>

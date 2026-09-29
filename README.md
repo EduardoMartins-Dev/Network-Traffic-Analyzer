@@ -129,59 +129,59 @@ flowchart LR
 ```
 Network-Traffic-Analyzer/
 ├── include/
-│   ├── analyzer.h        # Interface do motor IDS
-│   ├── capture.h         # Interface da camada de captura
-│   ├── cJSON.h           # Parser JSON (embutido)
-│   ├── collector.h       # Coletor de detecções para replay (v4.1)
-│   ├── pipeline.h        # Pipeline multi-thread e slots SPSC (v5.0)
-│   ├── publisher.h       # Cliente AMQP + batch sender + métricas (v5.0)
-│   ├── ringbuf.h         # Ring buffer SPSC lock-free (v5.0)
-│   ├── replay.h          # Framework de replay e test (v4.1)
-│   └── nta_*.h           # Interfaces do nta-server (v7.0+)
+│   ├── agent/                # Headers do agente
+│   │   ├── analyzer.h        #   motor IDS (EWMA + kill chain)
+│   │   ├── capture.h         #   captura libpcap/Npcap + --list-interfaces
+│   │   ├── cli.h             #   modos de execução e parsing de argumentos
+│   │   ├── config.h          #   --config (arquivo CHAVE=VALOR)
+│   │   ├── netif.h           #   descoberta de HOME_NET por plataforma
+│   │   ├── nta_net.h         #   cabeçalhos IPv4/TCP/UDP portáveis
+│   │   ├── pipeline.h        #   pipeline multi-thread (4 threads)
+│   │   ├── publisher.h       #   cliente AMQP com reconexão
+│   │   ├── replay.h          #   replay de .pcap + gabaritos
+│   │   ├── ringbuf.h         #   ring buffer SPSC lock-free
+│   │   └── service.h         #   Windows Service (NTAAgent)
+│   └── server/               # Headers do nta-server (nta_*.h)
 ├── src/
-│   ├── analysis/
-│   │   ├── analyzer.c    # IDS: 10 detectores + EWMA + Kill Chain
-│   │   └── collector.c   # Array em memória de eventos detectados
-│   ├── capture/
-│   │   └── capture.c     # Captura via libpcap / Npcap (push no rb_pkt)
-│   ├── core/
-│   │   ├── ringbuf.c     # SPSC lock-free (C11 atomics)
-│   │   └── pipeline.c    # 4 threads: capture / analysis / publish / metrics
-│   ├── server/           # nta-server: consumer AMQP, InfluxDB, GeoIP, IoC,
-│   │                     #   AbuseIPDB, WHOIS, narrator Groq, scaler, /health
-│   ├── output/
-│   │   ├── cJSON.c
-│   │   └── publisher.c   # Batch AMQP com array JSON + routing key metrics
-│   ├── replay/
-│   │   └── replay.c      # --replay / --replay-dir / gabarito JSON
-│   └── main.c
+│   ├── agent/
+│   │   ├── main.c / cli.c    # entrada e linha de comando
+│   │   ├── analysis/         # analyzer.c (10 detectores) + collector.c
+│   │   ├── capture/          # capture.c
+│   │   ├── core/             # pipeline.c, ringbuf.c, config.c
+│   │   ├── output/           # publisher.c (batch AMQP + métricas)
+│   │   ├── platform/         # netif_posix.c, netif_win32.c, service_win32.c
+│   │   └── replay/           # replay.c (--replay / --replay-dir)
+│   └── server/               # nta-server: consumer AMQP, InfluxDB, GeoIP, IoC,
+│                             #   AbuseIPDB, WHOIS, narrator Groq, scaler, /health
+├── third_party/cjson/        # cJSON (vendored)
 ├── tests/
-│   └── pcaps/            # PCAPs sintéticos + gabaritos JSON (gen_pcaps.py)
+│   ├── unit/                 # testes unitários (ctest)
+│   └── pcaps/                # PCAPs sintéticos + gabaritos (gen_pcaps.py)
+├── installer/                # instalador Windows (Inno Setup)
 ├── scripts/
-│   ├── up.sh / down.sh   # Sobe/derruba a stack do servidor (containers)
-│   ├── quickstart.sh     # install + up + smoke em um comando
-│   ├── install.sh        # Dependências por SO + build do agente
-│   ├── smoke-test.sh     # Build + replay + sniff curto (v5.0)
-│   ├── gen_agent_cert.sh # CA + certs mTLS (broker e agentes)
-│   ├── provision_agent.sh# User RabbitMQ + cert + env de um agente
-│   ├── influx_retention.sh # Retention 7d/90d + downsampling
-│   ├── ctl.py / agent_ctl.py # Control plane multi-agente (pika)
-│   └── dash_gen.py       # Gera dashboard Grafana via LLM
+│   ├── up.sh / down.sh       # sobe/derruba a stack do servidor (containers)
+│   ├── quickstart.sh         # install + up + smoke em um comando
+│   ├── install.sh            # dependências por SO + build do agente
+│   ├── smoke-test.sh         # build + replay + sniff curto
+│   ├── gen_agent_cert.sh     # CA + certs mTLS (broker e agentes)
+│   ├── provision_agent.sh    # user RabbitMQ + cert + env de um agente
+│   ├── influx_retention.sh   # retention 7d/90d + downsampling
+│   ├── ctl.py / agent_ctl.py # control plane multi-agente (pika)
+│   └── dash_gen.py           # gera dashboard Grafana via LLM
 ├── deploy/
-│   ├── nta-server.Dockerfile # Imagem do nta-server (usada pelo compose)
-│   ├── agent.env.example # Template de variáveis de ambiente do agente
-│   ├── agent.service     # Unit systemd com capabilities + hardening
-│   ├── rabbitmq/         # rabbitmq.conf (TLS/mTLS) + plugins
-│   └── secrets/          # *.env.example (Groq, AbuseIPDB); certs gerados
-├── grafana/              # Provisioning (datasource, dashboards, alertas)
-├── .github/
-│   └── workflows/
-│       └── test-ids.yml  # CI: build + replay (score ≥ 80%) + imagem do servidor
+│   ├── nta-server.Dockerfile # imagem do nta-server (usada pelo compose)
+│   ├── agent.env.example     # config do agente (--config / systemd / serviço Windows)
+│   ├── agent.service         # unit systemd do agente (Linux)
+│   ├── ioc/                  # blocklist.json.example
+│   ├── rabbitmq/             # rabbitmq.conf (TLS/mTLS) + plugins
+│   └── secrets/              # *.env.example (Groq, AbuseIPDB); certs gerados
+├── data/                     # GeoLite2 (.mmdb baixados à parte — ver READMEs)
+├── grafana/                  # provisioning (datasource, dashboards, alertas)
+├── .github/workflows/        # test-ids.yml (CI) + release.yml (tags v*)
 ├── docker-compose.yml
-├── .env.example          # Credenciais da stack (copiar para .env)
-├── requirements.txt      # pika — só para scripts/ctl.py e agent_ctl.py
-├── CMakeLists.txt
-└── README.md
+├── .env.example              # credenciais da stack (copiar para .env)
+├── requirements.txt          # pika — só para scripts/ctl.py e agent_ctl.py
+└── CMakeLists.txt            # agente, nta-server (NTA_BUILD_SERVER) e testes
 ```
 
 ---

@@ -13,6 +13,7 @@ WORKDIR /src
 COPY CMakeLists.txt ./
 COPY include ./include
 COPY src ./src
+COPY third_party ./third_party
 RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNTA_BUILD_TESTS=OFF \
     && cmake --build build --target nta-server -j"$(nproc)"
 

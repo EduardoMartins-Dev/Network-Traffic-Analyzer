@@ -3,21 +3,29 @@ project(NetworkTrafficAnalyzer C)
 
 set(CMAKE_C_STANDARD 11)
 
-include_directories(${CMAKE_SOURCE_DIR}/include)
+# Layout por componente:
+#   include/agent  + src/agent   — agente sensor (Linux, FreeBSD, macOS, Windows)
+#   include/server + src/server  — nta-server (Linux; em produção roda no Docker)
+#   third_party/cjson            — cJSON (vendored), usado pelos dois
+set(CJSON_DIR  ${CMAKE_SOURCE_DIR}/third_party/cjson)
+set(AGENT_INC  ${CMAKE_SOURCE_DIR}/include/agent ${CJSON_DIR})
+set(SERVER_INC ${CMAKE_SOURCE_DIR}/include/server ${CJSON_DIR})
 
 # --- AGENTE: Sensor de captura de tráfego (pipeline multi-thread v5.0) ---
 add_executable(NetworkTrafficAnalyzer
-        src/main.c
-        src/capture/capture.c
-        src/analysis/analyzer.c
-        src/analysis/collector.c
-        src/output/publisher.c
-        src/output/cJSON.c
-        src/replay/replay.c
-        src/core/ringbuf.c
-        src/core/pipeline.c
-        src/core/config.c
+        src/agent/main.c
+        src/agent/cli.c
+        src/agent/capture/capture.c
+        src/agent/analysis/analyzer.c
+        src/agent/analysis/collector.c
+        src/agent/output/publisher.c
+        src/agent/replay/replay.c
+        src/agent/core/ringbuf.c
+        src/agent/core/pipeline.c
+        src/agent/core/config.c
+        ${CJSON_DIR}/cJSON.c
 )
+target_include_directories(NetworkTrafficAnalyzer PRIVATE ${AGENT_INC})
 
 if(WIN32)
     # -------------------------------------------------------------------------
@@ -26,8 +34,8 @@ if(WIN32)
     # Threads/tempo POSIX vêm do winpthreads do MinGW; requer Npcap SDK.
     # -------------------------------------------------------------------------
     target_sources(NetworkTrafficAnalyzer PRIVATE
-        src/platform/netif_win32.c
-        src/platform/service_win32.c
+        src/agent/platform/netif_win32.c
+        src/agent/platform/service_win32.c
     )
     # inet_pton/inet_ntop e GetAdaptersAddresses.OnLinkPrefixLength: Windows 7+
     # AMQP_STATIC: rabbitmq-c linkado estático (sem dllimport nos headers).
@@ -65,7 +73,7 @@ else()
     # Linux / FreeBSD / macOS: libpcap + librabbitmq + pthreads (pipeline v5.0)
     # -------------------------------------------------------------------------
     find_package(Threads REQUIRED)
-    target_sources(NetworkTrafficAnalyzer PRIVATE src/platform/netif_posix.c)
+    target_sources(NetworkTrafficAnalyzer PRIVATE src/agent/platform/netif_posix.c)
 
     # FreeBSD instala libs de terceiros via ports/pkg em /usr/local/{lib,include}.
     if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
@@ -78,10 +86,11 @@ else()
     )
 endif()
 
-# --- SERVIDOR: nta-server em C (substitui o ingestor Python legado da v6.0) ---
-# Dependências: librabbitmq (já presente), libcurl, libmaxminddb.
-# Fedora/Toolbx: dnf install libcurl-devel libmaxminddb-devel
-if(NOT WIN32)
+# --- SERVIDOR: nta-server em C (em produção é compilado na imagem Docker) ---
+# Dependências: librabbitmq, libcurl, libmaxminddb.
+# Num host só de agente: -DNTA_BUILD_SERVER=OFF dispensa libcurl/libmaxminddb.
+option(NTA_BUILD_SERVER "Compila o nta-server (Linux)" ON)
+if(NTA_BUILD_SERVER AND NOT WIN32)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(LIBCURL REQUIRED libcurl)
     pkg_check_modules(LIBMAXMINDDB REQUIRED libmaxminddb)
@@ -97,10 +106,11 @@ if(NOT WIN32)
             src/server/nta_narrator.c
             src/server/nta_scaler.c
             src/server/nta_health.c
-            src/output/cJSON.c
+            ${CJSON_DIR}/cJSON.c
     )
 
     target_include_directories(nta-server PRIVATE
+            ${SERVER_INC}
             ${LIBCURL_INCLUDE_DIRS}
             ${LIBMAXMINDDB_INCLUDE_DIRS}
     )
@@ -120,13 +130,13 @@ if(NTA_BUILD_TESTS)
     enable_testing()
     find_package(Threads REQUIRED)
 
-    add_executable(test_ringbuf tests/unit/test_ringbuf.c src/core/ringbuf.c)
+    add_executable(test_ringbuf tests/unit/test_ringbuf.c src/agent/core/ringbuf.c)
     target_link_libraries(test_ringbuf PRIVATE Threads::Threads)
 
-    add_executable(test_config tests/unit/test_config.c src/core/config.c)
+    add_executable(test_config tests/unit/test_config.c src/agent/core/config.c)
 
     add_executable(test_analyzer tests/unit/test_analyzer.c
-            src/analysis/analyzer.c src/analysis/collector.c)
+            src/agent/analysis/analyzer.c src/agent/analysis/collector.c)
     if(WIN32)
         target_compile_definitions(test_analyzer PRIVATE _WIN32_WINNT=0x0601)
         target_link_libraries(test_analyzer PRIVATE Ws2_32)
@@ -135,12 +145,14 @@ if(NTA_BUILD_TESTS)
     endif()
 
     foreach(t test_ringbuf test_config test_analyzer)
+        target_include_directories(${t} PRIVATE ${AGENT_INC})
         add_test(NAME ${t} COMMAND ${t})
     endforeach()
 
     # Parser WHOIS do nta-server (servidor é Linux/Docker)
     if(NOT WIN32)
         add_executable(test_whois tests/unit/test_whois.c)
+        target_include_directories(test_whois PRIVATE ${SERVER_INC})
         target_link_libraries(test_whois PRIVATE Threads::Threads)
         add_test(NAME test_whois COMMAND test_whois)
     endif()
