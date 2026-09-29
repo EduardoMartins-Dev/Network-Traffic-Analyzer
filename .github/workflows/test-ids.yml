@@ -108,3 +108,10 @@ jobs:
           if ldd build/NetworkTrafficAnalyzer.exe | grep -i '/ucrt64/'; then
             echo "::error::.exe depende de DLLs do MSYS2"; exit 1
           fi
+
+      - name: Instalador compila (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=0.0.0-ci installer\nta-agent.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

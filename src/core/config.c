@@ -30,7 +30,12 @@ int config_load_file(const char *path) {
     int applied = 0, lineno = 0;
     while (fgets(line, sizeof(line), f)) {
         lineno++;
-        char *s = trim(line);           /* trim também remove \r de CRLF */
+        char *s = line;
+        /* BOM UTF-8 (Bloco de Notas, instalador Windows) */
+        if (lineno == 1 && (unsigned char)s[0] == 0xEF &&
+            (unsigned char)s[1] == 0xBB && (unsigned char)s[2] == 0xBF)
+            s += 3;
+        s = trim(s);                    /* trim também remove \r de CRLF */
         if (*s == '\0' || *s == '#') continue;
 
         char *eq = strchr(s, '=');

@@ -380,6 +380,24 @@ Não precisa ser Administrador, a menos que o Npcap tenha sido instalado com
 "Restrict Npcap driver's access to Administrators only". O `.exe` é linkado
 estático (rabbitmq-c, OpenSSL, winpthreads): só depende do Npcap instalado.
 
+#### Instalador (recomendado)
+
+Baixe o `NTA-Agent-Setup-<versão>.exe` em
+[Releases](https://github.com/EduardoMartins-Dev/Network-Traffic-Analyzer/releases)
+(pré-requisito: [Npcap](https://npcap.com/#download) com *WinPcap API-compatible Mode*).
+O assistente pede servidor, porta, usuário/token e a interface de captura, grava
+`C:\ProgramData\NTA\agent.conf` (legível só por SYSTEM/Administradores — guarda o
+token) e registra/inicia o serviço. Atualizar = rodar o instalador novo (a config
+é mantida). Implantação em massa, sem interface:
+
+```powershell
+NTA-Agent-Setup-1.0.0.exe /VERYSILENT /SUPPRESSMSGBOXES /SERVER=10.0.0.5 /PORT=5674 `
+  /USER=agente-01 /TOKEN=<senha> /IFACE=\Device\NPF_{GUID}
+```
+
+Gerar localmente: `iscc /DAppVersion=1.0.0 installer\nta-agent.iss` (após o build).
+Releases são gerados pelo CI ao publicar uma tag `v*` (`.github/workflows/release.yml`).
+
 #### Windows Service
 
 O agente roda como serviço `NTAAgent` (início automático, conta LocalSystem,
