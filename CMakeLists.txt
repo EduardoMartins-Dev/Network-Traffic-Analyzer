@@ -46,19 +46,27 @@ if(WIN32)
     # no PATH. Só wpcap.dll/Packet.dll (Npcap, em System32) ficam dinâmicas.
     target_link_options(NetworkTrafficAnalyzer PRIVATE -static)
 
+    # Do Npcap SDK só usamos os headers; o link é pelo wpcap.def abaixo.
     set(NPCAP_SDK_DIR "C:/Npcap-sdk" CACHE PATH "Diretorio raiz do Npcap SDK")
 
     include_directories("${NPCAP_SDK_DIR}/Include")
 
-    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-        set(NPCAP_LIB_DIR "${NPCAP_SDK_DIR}/Lib/x64")
-    else()
-        set(NPCAP_LIB_DIR "${NPCAP_SDK_DIR}/Lib")
-    endif()
+    # wpcap.dll em delay-load (ver src/agent/platform/wpcap.def): o Npcap sem
+    # modo compatível instala o DLL só em System32\Npcap, fora da busca padrão.
+    find_program(DLLTOOL NAMES dlltool REQUIRED)
+    set(WPCAP_DELAYLIB ${CMAKE_BINARY_DIR}/libwpcap_delay.a)
+    add_custom_command(
+        OUTPUT  ${WPCAP_DELAYLIB}
+        COMMAND ${DLLTOOL} --input-def ${CMAKE_SOURCE_DIR}/src/agent/platform/wpcap.def
+                --dllname wpcap.dll --output-delaylib ${WPCAP_DELAYLIB}
+        DEPENDS ${CMAKE_SOURCE_DIR}/src/agent/platform/wpcap.def
+        COMMENT "Gerando import lib delay-load do wpcap.dll")
+    add_custom_target(wpcap_delaylib DEPENDS ${WPCAP_DELAYLIB})
+    add_dependencies(NetworkTrafficAnalyzer wpcap_delaylib)
 
     target_link_libraries(NetworkTrafficAnalyzer PRIVATE
-        "${NPCAP_LIB_DIR}/wpcap.lib"
-        "${NPCAP_LIB_DIR}/Packet.lib"
+        ${WPCAP_DELAYLIB}
+        delayimp
         rabbitmq
         ssl
         crypto

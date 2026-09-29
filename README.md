@@ -366,7 +366,7 @@ sudo journalctl -u nta-agent -f
 Toolchain: **MinGW-w64 via [MSYS2](https://www.msys2.org/) (UCRT64)**. MSVC não é
 suportado — o pipeline usa atômicos C11, ainda experimentais no MSVC.
 
-- [Npcap](https://npcap.com/) (runtime) com "WinPcap API-compatible mode"
+- [Npcap](https://npcap.com/) (runtime), opções padrão — o modo compatível com WinPcap não é necessário
 - [Npcap SDK](https://npcap.com/dist/npcap-sdk-1.16.zip) extraído em `C:\Npcap-sdk`
 - Pacotes MSYS2 (terminal **UCRT64**):
 
@@ -386,7 +386,7 @@ estático (rabbitmq-c, OpenSSL, winpthreads): só depende do Npcap instalado.
 
 Baixe o `NTA-Agent-Setup-<versão>.exe` em
 [Releases](https://github.com/EduardoMartins-Dev/Network-Traffic-Analyzer/releases)
-(pré-requisito: [Npcap](https://npcap.com/#download) com *WinPcap API-compatible Mode*).
+(pré-requisito: [Npcap](https://npcap.com/#download), opções padrão).
 O assistente pede servidor, porta, usuário/token e a interface de captura, grava
 `C:\ProgramData\NTA\agent.conf` (legível só por SYSTEM/Administradores — guarda o
 token) e registra/inicia o serviço. Atualizar = rodar o instalador novo (a config
