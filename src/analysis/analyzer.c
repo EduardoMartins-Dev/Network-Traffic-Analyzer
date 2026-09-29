@@ -1,8 +1,4 @@
-#include <netinet/ip.h>
-#include <netinet/tcp.h>
-#include <netinet/udp.h>
-#include <netinet/ip_icmp.h>
-#include <arpa/inet.h>
+#include "../include/nta_net.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -16,7 +12,7 @@
 /* ========================================================================= *
  * HOME_NET — CIDRs ignorados no IP layer (não no ARP).                      *
  * Armazenamos addr/mask em network byte order — comparação direta com      *
- * ip_header->ip_src.s_addr (também network byte order) sem swap.            *
+ * ip_header->saddr (também network byte order) sem swap.                    *
  * ========================================================================= */
 #define MAX_HOME_CIDR 8
 typedef struct { uint32_t addr_be; uint32_t mask_be; char str[20]; } HomeCidr;
@@ -512,7 +508,7 @@ static int extract_dns_name(const unsigned char *dns_payload, int dns_len,
  * Fallback para threshold fixo (100) durante calibração.
  */
 static const char *detect_syn_flood(Suspect *s, uint8_t tcp_flags) {
-    if (!((tcp_flags & TH_SYN) && !(tcp_flags & TH_ACK))) return NULL;
+    if (!((tcp_flags & NTA_TH_SYN) && !(tcp_flags & NTA_TH_ACK))) return NULL;
 
     s->syn_count++;
 
@@ -540,12 +536,12 @@ static const char *detect_stealth_scan(Suspect *s, uint8_t tcp_flags) {
         if (s->null_scan_count >= STEALTH_THRESHOLD) return "NULL_SCAN";
     }
 
-    if ((tcp_flags & (TH_FIN | TH_PUSH | TH_URG)) == (TH_FIN | TH_PUSH | TH_URG)) {
+    if ((tcp_flags & (NTA_TH_FIN | NTA_TH_PUSH | NTA_TH_URG)) == (NTA_TH_FIN | NTA_TH_PUSH | NTA_TH_URG)) {
         s->xmas_scan_count++;
         if (s->xmas_scan_count >= STEALTH_THRESHOLD) return "XMAS_SCAN";
     }
 
-    if ((tcp_flags & (TH_SYN | TH_FIN)) == (TH_SYN | TH_FIN)) {
+    if ((tcp_flags & (NTA_TH_SYN | NTA_TH_FIN)) == (NTA_TH_SYN | NTA_TH_FIN)) {
         s->synfin_scan_count++;
         if (s->synfin_scan_count >= STEALTH_THRESHOLD) return "SYNFIN_SCAN";
     }
@@ -561,7 +557,7 @@ static const char *detect_stealth_scan(Suspect *s, uint8_t tcp_flags) {
  */
 static const char *detect_brute_force(Suspect *s, uint8_t tcp_flags, uint16_t dst_port,
                                       time_t now) {
-    if (!(tcp_flags & TH_SYN) || (tcp_flags & TH_ACK)) return NULL;
+    if (!(tcp_flags & NTA_TH_SYN) || (tcp_flags & NTA_TH_ACK)) return NULL;
     if (dst_port != PORT_SSH && dst_port != PORT_FTP && dst_port != PORT_RDP) return NULL;
 
     if (difftime(now, s->brute_window_start) > BRUTE_WINDOW_SEC) {
@@ -755,9 +751,11 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
 
     if (ether_type != 0x0800) return 0;
 
-    struct ip *ip_header = (struct ip *)(packet + 14);
-    uint32_t   src_ip    = ip_header->ip_src.s_addr;
-    int        ip_hlen   = ip_header->ip_hl << 2;
+    const nta_ipv4_hdr *ip_header = (const nta_ipv4_hdr *)(packet + NTA_ETH_HLEN);
+    uint32_t            src_ip    = ip_header->saddr;
+    int                 ip_hlen   = NTA_IPV4_HLEN(ip_header);
+    struct in_addr      src_addr;
+    src_addr.s_addr = src_ip;
 
     /* HOME_NET skip — promiscuous captura egress do próprio host. Sem skip,
      * DNS queries legítimas viram DNS_TUNNEL (subdomains longos de CDN),
@@ -772,16 +770,16 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
     /* ------------------------------------------------------------------- *
      * ICMP                                                                 *
      * ------------------------------------------------------------------- */
-    if (ip_header->ip_p == IPPROTO_ICMP) {
+    if (ip_header->proto == NTA_PROTO_ICMP) {
         update_baseline(&s->baseline, 0, 0, now);
 
         attack = detect_icmp_flood(s);
         if (attack) {
             advance_kill_chain(s, attack, now);
-            collector_record(attack, inet_ntoa(ip_header->ip_src), now);
+            collector_record(attack, inet_ntoa(src_addr), now);
         }
 
-        publish_packet(inet_ntoa(ip_header->ip_src), 0, "ICMP", length,
+        publish_packet(inet_ntoa(src_addr), 0, "ICMP", length,
                        attack ? 1 : 0, attack,
                        kc_stage_name[s->kc_stage], s->kc_score,
                        attack ? attack_to_mitre(attack) : "");
@@ -791,10 +789,10 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
     /* ------------------------------------------------------------------- *
      * TCP: Stealth Scan, SYN Flood, Brute Force, Port Scan                *
      * ------------------------------------------------------------------- */
-    if (ip_header->ip_p == IPPROTO_TCP) {
-        struct tcphdr *tcp      = (struct tcphdr *)(packet + 14 + ip_hlen);
-        uint16_t       dst_port = ntohs(tcp->th_dport);
-        uint8_t        flags    = tcp->th_flags;
+    if (ip_header->proto == NTA_PROTO_TCP) {
+        const nta_tcp_hdr *tcp  = (const nta_tcp_hdr *)(packet + NTA_ETH_HLEN + ip_hlen);
+        uint16_t       dst_port = ntohs(tcp->dport);
+        uint8_t        flags    = tcp->flags;
 
         /* Verifica se é porta nova para o baseline */
         int new_port = 1;
@@ -810,10 +808,10 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
 
         if (attack) {
             advance_kill_chain(s, attack, now);
-            collector_record(attack, inet_ntoa(ip_header->ip_src), now);
+            collector_record(attack, inet_ntoa(src_addr), now);
         }
 
-        publish_packet(inet_ntoa(ip_header->ip_src), dst_port, "TCP", length,
+        publish_packet(inet_ntoa(src_addr), dst_port, "TCP", length,
                        attack ? 1 : 0, attack,
                        kc_stage_name[s->kc_stage], s->kc_score,
                        attack ? attack_to_mitre(attack) : "");
@@ -823,10 +821,10 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
     /* ------------------------------------------------------------------- *
      * UDP: DNS Tunneling, DDoS Amplification                              *
      * ------------------------------------------------------------------- */
-    if (ip_header->ip_p == IPPROTO_UDP) {
-        struct udphdr *udp      = (struct udphdr *)(packet + 14 + ip_hlen);
-        uint16_t       src_port = ntohs(udp->uh_sport);
-        uint16_t       dst_port = ntohs(udp->uh_dport);
+    if (ip_header->proto == NTA_PROTO_UDP) {
+        const nta_udp_hdr *udp  = (const nta_udp_hdr *)(packet + NTA_ETH_HLEN + ip_hlen);
+        uint16_t       src_port = ntohs(udp->sport);
+        uint16_t       dst_port = ntohs(udp->dport);
         int            is_dns   = (src_port == 53 || dst_port == 53);
 
         update_baseline(&s->baseline, 0, is_dns, now);
@@ -847,10 +845,10 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
 
         if (attack) {
             advance_kill_chain(s, attack, now);
-            collector_record(attack, inet_ntoa(ip_header->ip_src), now);
+            collector_record(attack, inet_ntoa(src_addr), now);
         }
 
-        publish_packet(inet_ntoa(ip_header->ip_src), dst_port, "UDP", length,
+        publish_packet(inet_ntoa(src_addr), dst_port, "UDP", length,
                        attack ? 1 : 0, attack,
                        kc_stage_name[s->kc_stage], s->kc_score,
                        attack ? attack_to_mitre(attack) : "");
