@@ -11,4 +11,9 @@
 void packet_handler(u_char *args, const struct pcap_pkthdr *header,
                     const u_char *packet);
 
+/* Lista as interfaces de captura (pcap_findalldevs) com descrição e IPv4.  *
+ * No Windows o nome é "\Device\NPF_{GUID}" — este é o jeito de descobri-lo. *
+ * Retorna 0 em sucesso.                                                      */
+int capture_list_interfaces(void);
+
 #endif

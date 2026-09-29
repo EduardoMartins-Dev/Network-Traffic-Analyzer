@@ -24,11 +24,12 @@ static void print_usage(const char *prog) {
     fprintf(stderr,
         "Uso:\n"
         "  %s <interface>                          — captura ao vivo\n"
+        "  %s --list-interfaces                    — lista interfaces de captura\n"
         "  %s --replay <file.pcap>                 — replay de arquivo\n"
         "        [--expect <gabarito.json>]         — valida detecções\n"
         "  %s --replay-dir <diretório>             — replay de diretório\n"
         "        [--report <relatório.json>]        — salva relatório\n",
-        prog, prog, prog);
+        prog, prog, prog, prog);
 }
 
 AgentArgs parse_args(int argc, char *argv[]) {
@@ -42,7 +43,9 @@ AgentArgs parse_args(int argc, char *argv[]) {
     }
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--replay") == 0 && i + 1 < argc) {
+        if (strcmp(argv[i], "--list-interfaces") == 0) {
+            args.mode = MODE_LIST_IFACES;
+        } else if (strcmp(argv[i], "--replay") == 0 && i + 1 < argc) {
             args.mode      = MODE_REPLAY_FILE;
             args.pcap_file = argv[++i];
         } else if (strcmp(argv[i], "--replay-dir") == 0 && i + 1 < argc) {

@@ -1,5 +1,7 @@
+#include <stdio.h>
 #include <string.h>
 #include <pcap.h>
+#include "../../include/nta_net.h"
 #include "../../include/capture.h"
 #include "../../include/analyzer.h"
 #include "../../include/collector.h"
@@ -28,4 +30,31 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header,
     memcpy(slot.data, packet, (size_t)len);
 
     pipeline_push_packet(&slot);
+}
+
+int capture_list_interfaces(void) {
+    char errbuf[PCAP_ERRBUF_SIZE];
+    pcap_if_t *devs = NULL;
+    if (pcap_findalldevs(&devs, errbuf) != 0) {
+        fprintf(stderr, "Erro ao listar interfaces: %s\n", errbuf);
+        return 1;
+    }
+    if (!devs) {
+        fprintf(stderr, "Nenhuma interface de captura encontrada "
+                        "(sem permissão ou driver de captura ausente?).\n");
+        return 1;
+    }
+    for (pcap_if_t *d = devs; d; d = d->next) {
+        printf("%s\n", d->name);
+        if (d->description) printf("    %s\n", d->description);
+        for (pcap_addr_t *a = d->addresses; a; a = a->next) {
+            if (!a->addr || a->addr->sa_family != AF_INET) continue;
+            char ip[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &((struct sockaddr_in *)a->addr)->sin_addr,
+                      ip, sizeof(ip));
+            printf("    IPv4 %s\n", ip);
+        }
+    }
+    pcap_freealldevs(devs);
+    return 0;
 }

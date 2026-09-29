@@ -361,18 +361,24 @@ sudo journalctl -u nta-agent -f
 
 #### Windows (agente)
 
-- [Npcap](https://npcap.com/) com "WinPcap API compatibility mode"
-- [Npcap SDK](https://npcap.com/dist/npcap-sdk-1.13.zip) extraído em `C:\Npcap-sdk`
-- [librabbitmq-c](https://github.com/alanxz/rabbitmq-c) compilado com CMake
-- Visual Studio 2022 ou MinGW-w64
+Toolchain: **MinGW-w64 via [MSYS2](https://www.msys2.org/) (UCRT64)**. MSVC não é
+suportado — o pipeline usa atômicos C11, ainda experimentais no MSVC.
 
-```powershell
-cmake -B build -S . -DNPCAP_SDK_DIR="C:/Npcap-sdk"
-cmake --build build --config Release
+- [Npcap](https://npcap.com/) (runtime) com "WinPcap API-compatible mode"
+- [Npcap SDK](https://npcap.com/dist/npcap-sdk-1.16.zip) extraído em `C:\Npcap-sdk`
+- Pacotes MSYS2 (terminal **UCRT64**):
+
+```bash
+pacman -S --needed mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,rabbitmq-c}
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNPCAP_SDK_DIR="C:/Npcap-sdk"
+cmake --build build
+./build/NetworkTrafficAnalyzer.exe --replay-dir tests/pcaps   # valida: 6/6
+./build/NetworkTrafficAnalyzer.exe --list-interfaces          # \Device\NPF_{GUID}
 ```
 
-> Pipeline multi-thread (v5.0) usa `pthreads` + `SCHED_FIFO`, específicos de
-> Linux. Suporte completo no Windows planejado para a **v5.1**.
+Não precisa ser Administrador, a menos que o Npcap tenha sido instalado com
+"Restrict Npcap driver's access to Administrators only". Fora do terminal
+UCRT64, o `.exe` precisa das DLLs de `C:\msys64\ucrt64\bin` no `PATH`.
 
 ---
 
@@ -381,10 +387,10 @@ cmake --build build --config Release
 ### Modo live — captura de interface
 
 ```bash
-# Sem argumentos: lista interfaces disponíveis
-./build/NetworkTrafficAnalyzer
+# Lista as interfaces de captura (no Windows: \Device\NPF_{GUID})
+./build/NetworkTrafficAnalyzer --list-interfaces
 
-# Com interface escolhida (precisa root OU setcap aplicado)
+# Com interface escolhida (Linux: root OU setcap aplicado)
 ./build/NetworkTrafficAnalyzer eth0
 ```
 
@@ -782,7 +788,7 @@ O workflow `.github/workflows/test-ids.yml` executa a cada push/PR:
 | v4.1 | PCAP Replay + Test Framework + CI/CD | ✅ |
 | v5.0 | Multi-Threading (pthreads + ring buffer lock-free + batch AMQP) | ✅ |
 | v5.5 | DX (install/quickstart/Makefile) + LLM Dashboard Generator | ✅ |
-| v5.1 | Validação Windows (Npcap + multi-thread) | Planejado |
+| v5.1 | Validação Windows (Npcap + multi-thread) | ✅ agente nativo (MSYS2/MinGW-w64) · serviço e instalador em andamento |
 | v6.0 | AI Narrator (LLM via Groq) | ✅ migrado para C em v7.0 |
 | v7.0 | nta-server em C + narrator C (Groq) + pool adaptativo (Mgmt API) + retention 7d/90d + mTLS multi-agente | ✅ feature-complete · cluster RabbitMQ deferido p/ v10.0 |
 | v8.0 | Threat Intelligence (GeoLite2-City+ASN, IoC framework, AbuseIPDB + dual-trigger narrator, WHOIS nativo) | ✅ feature-complete |
