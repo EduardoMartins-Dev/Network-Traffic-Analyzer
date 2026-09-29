@@ -651,16 +651,19 @@ static const char *detect_arp_spoof(const unsigned char *packet, int length) {
     for (int i = 0; i < arp_count; i++) {
         if (memcmp(arp_table[i].mac, sender_mac, 6) == 0) {
             if (arp_table[i].ip != sender_ip) {
-                struct in_addr old_addr, new_addr;
-                old_addr.s_addr = arp_table[i].ip;
-                new_addr.s_addr = sender_ip;
+                /* inet_ntop com buffers próprios: inet_ntoa usa um buffer
+                 * estático, e as duas chamadas no mesmo printf imprimiam
+                 * o mesmo IP. */
+                char old_str[INET_ADDRSTRLEN], new_str[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &arp_table[i].ip, old_str, sizeof(old_str));
+                inet_ntop(AF_INET, &sender_ip,       new_str, sizeof(new_str));
                 printf("[IDS] ARP SPOOF: MAC %02x:%02x:%02x:%02x:%02x:%02x "
                        "mudou de %s para %s!\n",
                        sender_mac[0], sender_mac[1], sender_mac[2],
                        sender_mac[3], sender_mac[4], sender_mac[5],
-                       inet_ntoa(old_addr), inet_ntoa(new_addr));
+                       old_str, new_str);
 
-                publish_packet(inet_ntoa(new_addr), 0, "ARP", length,
+                publish_packet(new_str, 0, "ARP", length,
                                1, "ARP_SPOOF",
                                kc_stage_name[KC_RECON], 20, "T1557");
                 return "ARP_SPOOF";
@@ -751,9 +754,16 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
 
     if (ether_type != 0x0800) return 0;
 
+    /* Pacote vem da rede (potencialmente hostil): cada cabeçalho é validado
+     * contra `length` antes de ser lido. Truncado/malformado é ignorado. */
+    if (length < NTA_ETH_HLEN + (int)sizeof(nta_ipv4_hdr)) return 0;
+
     const nta_ipv4_hdr *ip_header = (const nta_ipv4_hdr *)(packet + NTA_ETH_HLEN);
     uint32_t            src_ip    = ip_header->saddr;
     int                 ip_hlen   = NTA_IPV4_HLEN(ip_header);
+    if (ip_hlen < (int)sizeof(nta_ipv4_hdr) || NTA_ETH_HLEN + ip_hlen > length)
+        return 0;
+    int                 l4_len    = length - NTA_ETH_HLEN - ip_hlen;
     struct in_addr      src_addr;
     src_addr.s_addr = src_ip;
 
@@ -790,6 +800,7 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
      * TCP: Stealth Scan, SYN Flood, Brute Force, Port Scan                *
      * ------------------------------------------------------------------- */
     if (ip_header->proto == NTA_PROTO_TCP) {
+        if (l4_len < (int)sizeof(nta_tcp_hdr)) return 0;
         const nta_tcp_hdr *tcp  = (const nta_tcp_hdr *)(packet + NTA_ETH_HLEN + ip_hlen);
         uint16_t       dst_port = ntohs(tcp->dport);
         uint8_t        flags    = tcp->flags;
@@ -822,6 +833,7 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
      * UDP: DNS Tunneling, DDoS Amplification                              *
      * ------------------------------------------------------------------- */
     if (ip_header->proto == NTA_PROTO_UDP) {
+        if (l4_len < (int)sizeof(nta_udp_hdr)) return 0;
         const nta_udp_hdr *udp  = (const nta_udp_hdr *)(packet + NTA_ETH_HLEN + ip_hlen);
         uint16_t       src_port = ntohs(udp->sport);
         uint16_t       dst_port = ntohs(udp->dport);
@@ -833,7 +845,8 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
             const unsigned char *dns_payload = packet + 14 + ip_hlen + 8;
             int dns_len = length - 14 - ip_hlen - 8;
 
-            if (dns_len > 0) {
+            /* Header DNS tem 12 bytes (flags no byte 2); menor não é DNS. */
+            if (dns_len >= 12) {
                 int is_response = (dns_payload[2] & 0x80) != 0;
 
                 if (!is_response)

@@ -17,14 +17,16 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header,
                     const u_char *packet) {
     (void)args;
 
+    /* caplen = bytes realmente presentes em `packet`; len é o tamanho
+     * original no fio e pode ser maior (pcap gravado com snaplen curto). */
     if (g_replay_mode) {
-        analyze_packet(packet, header->len, header->ts.tv_sec);
+        analyze_packet(packet, (int)header->caplen, header->ts.tv_sec);
         return;
     }
 
     pkt_slot_t slot;
     slot.ts  = header->ts;
-    int len  = header->len;
+    int len  = (int)header->caplen;
     if (len > SNAP_LEN) len = SNAP_LEN;
     slot.len = len;
     memcpy(slot.data, packet, (size_t)len);
