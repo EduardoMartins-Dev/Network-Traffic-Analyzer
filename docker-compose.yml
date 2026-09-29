@@ -53,8 +53,10 @@ services:
       - GF_RENDERING_RENDERER_TOKEN=${GF_RENDERER_TOKEN:-nta-render-token-change-me}
       - GF_RENDERING_RENDERER_REQUEST_TIMEOUT=120s
       - GF_RENDERING_TIMEOUT=120
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      # Placeholders mantêm o provisioning válido sem .env (Grafana recusa token vazio);
+      # alertas só são entregues com valores reais — ver .env.example.
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-telegram-disabled}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-0}
     depends_on:
       - influxdb
       - gf-renderer

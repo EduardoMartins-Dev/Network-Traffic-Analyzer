@@ -11,7 +11,7 @@ contactPoints:
         type: telegram
         settings:
           bottoken: ${TELEGRAM_BOT_TOKEN}
-          chatid: "8326750174"
+          chatid: "${TELEGRAM_CHAT_ID}"
           parse_mode: HTML
           message: |
             🚨 <b>{{ .CommonLabels.alertname }}</b>

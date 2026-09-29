@@ -246,11 +246,10 @@ sudo dnf install moby-engine docker-compose python3 python3-pip
 
 Manual (sem scripts):
 ```bash
+./scripts/gen_agent_cert.sh server   # obrigatório: rabbitmq.conf exige os certs TLS
+cp .env.example .env                 # opcional: alertas Telegram
 docker compose up -d
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-./build/nta-server &
-python3 src/ingestor/narrator.py &
+./build/nta-server &                 # inclui o narrator (GROQ_API_KEY)
 ```
 
 Acesso:
