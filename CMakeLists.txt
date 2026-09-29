@@ -43,7 +43,6 @@ if(WIN32)
         "${NPCAP_LIB_DIR}/Packet.lib"
         Ws2_32
         Iphlpapi
-        Shell32   # IsUserAnAdmin (checagem de privilégio em main.c)
         rabbitmq
         pthread
     )

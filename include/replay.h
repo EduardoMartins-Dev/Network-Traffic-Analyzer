@@ -19,7 +19,8 @@
 typedef enum {
     MODE_LIVE        = 0,
     MODE_REPLAY_FILE = 1,
-    MODE_REPLAY_DIR  = 2
+    MODE_REPLAY_DIR  = 2,
+    MODE_LIST_IFACES = 3   /* --list-interfaces: nomes aceitos pelo modo live */
 } RunMode;
 
 typedef struct {

@@ -11,10 +11,11 @@
  * VERIFICAÇÃO DE PRIVILÉGIOS (Multiplataforma)                              *
  * ========================================================================= */
 #ifdef _WIN32
-    #include <windows.h>
-    #include <shlobj.h>
-    static int has_privileges() { return IsUserAnAdmin(); }
-    static const char *PRIVILEGE_MSG = "Execute como Administrador.";
+    /* Quem decide é o Npcap: com "Restrict to Administrators" (AdminOnly=1)
+     * o pcap_open_live falha e o erro sai no log da captura. Sem essa opção,
+     * usuário comum captura normalmente — não bloqueamos aqui. */
+    static int has_privileges(void) { return 1; }
+    static const char *PRIVILEGE_MSG = "";
 #elif defined(__linux__)
     #include <unistd.h>
     #include <sys/syscall.h>
@@ -87,6 +88,9 @@ int main(int argc, char *argv[]) {
         replay_dir(args.replay_dir, args.report_file);
         return 0;
     }
+
+    if (args.mode == MODE_LIST_IFACES)
+        return capture_list_interfaces();
 
     return 0;
 }

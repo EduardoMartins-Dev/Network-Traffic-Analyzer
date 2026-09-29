@@ -18,6 +18,9 @@
 #include <time.h>
 #include <pcap.h>
 #include "../../include/netif.h"
+#ifdef _WIN32
+#include <windows.h>   /* SetThreadPriority */
+#endif
 
 /* ========================================================================= *
  * CONSTANTES                                                                *
@@ -121,11 +124,18 @@ static void *capture_thread(void *arg) {
     const char *iface = (const char *)arg;
 
     /* Eleva prioridade — não fatal se falhar (ex.: rodando sem CAP_SYS_NICE). */
+#ifdef _WIN32
+    if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL)) {
+        fprintf(stderr, "[PIPE] Aviso: nao foi possivel elevar a prioridade "
+                        "da thread de captura.\n");
+    }
+#else
     struct sched_param sp = { .sched_priority = 80 };
     if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0) {
         fprintf(stderr, "[PIPE] Aviso: nao foi possivel aplicar SCHED_FIFO "
                         "(continuando em SCHED_OTHER).\n");
     }
+#endif
 
     init_home_nets(iface);
 
