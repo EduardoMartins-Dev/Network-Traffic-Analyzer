@@ -1,0 +1,63 @@
+name: Release
+
+# git tag v1.2.3 && git push origin v1.2.3
+# Gera o agente Windows (.exe estático + instalador) e publica numa GitHub Release.
+on:
+  push:
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+jobs:
+  windows-agent:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            curl unzip
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-rabbitmq-c
+
+      - name: Npcap SDK
+        run: |
+          curl -sSLo /tmp/npcap-sdk.zip https://npcap.com/dist/npcap-sdk-1.16.zip
+          unzip -q /tmp/npcap-sdk.zip -d /tmp/npcap-sdk
+
+      - name: Build do agente (.exe estático)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNPCAP_SDK_DIR="$(cygpath -m /tmp/npcap-sdk)"
+          cmake --build build
+          if ldd build/NetworkTrafficAnalyzer.exe | grep -i '/ucrt64/'; then
+            echo "::error::.exe depende de DLLs do MSYS2"; exit 1
+          fi
+
+      - name: Instalador (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" installer\nta-agent.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item build\NetworkTrafficAnalyzer.exe "build\installer\NetworkTrafficAnalyzer-$version-windows-x64.exe"
+
+      - name: GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" build\installer\*.exe `
+            --title "${{ github.ref_name }}" --generate-notes `
+            --notes "Agente Windows: instale o Npcap (modo compatível com WinPcap) e rode o NTA-Agent-Setup. Servidor: docker compose (ver README)."
