@@ -31,7 +31,7 @@ A v7.0 substitui o ingestor Python por um servidor em C (`nta-server`) com pool 
 
 ## Detecções (v4.0)
 
-O motor IDS cobre 8 vetores de ataque com detecção comportamental adaptativa:
+O motor IDS cobre 10 vetores de ataque com detecção comportamental adaptativa:
 
 | Detecção | Protocolo | MITRE ATT&CK | Descrição |
 |---|---|---|---|
@@ -180,7 +180,7 @@ Network-Traffic-Analyzer/
 ├── .github/workflows/        # test-ids.yml (CI) + release.yml (tags v*)
 ├── docker-compose.yml
 ├── .env.example              # credenciais da stack (copiar para .env)
-├── requirements.txt          # pika — só para scripts/ctl.py e agent_ctl.py
+├── requirements.txt          # pika (scripts/ctl.py, agent_ctl.py) e requests (scripts/dash_gen.py)
 └── CMakeLists.txt            # agente, nta-server (NTA_BUILD_SERVER) e testes
 ```
 
@@ -611,7 +611,7 @@ Em deploy com múltiplos sensores, cada agente autentica no broker via certifica
 | `AGENT_CLIENT_CERT` | Cert cliente — CN deve bater com `agent-<nome>` |
 | `AGENT_CLIENT_KEY` | Chave privada do cert cliente (chmod 600) |
 
-Com `AGENT_CLIENT_CERT` + `AGENT_CLIENT_KEY` presentes, o publisher chama `amqp_ssl_socket_set_key()` e faz `SASL EXTERNAL`. Sem eles, fallback p/ PLAIN com `AGENT_ID`/`AGENT_TOKEN` (compat com agentes legados).
+Com `AGENT_CLIENT_CERT` + `AGENT_CLIENT_KEY` presentes, o publisher chama `amqp_ssl_socket_set_key()` e faz `SASL EXTERNAL`. Sem eles, fallback p/ PLAIN com `AGENT_ID`/`AGENT_TOKEN` (compat com agentes legados). Esse fallback só funciona sem TLS (porta `5674`): com TLS na `5671` e sem certificado de cliente, o broker recusa o handshake (`ssl_options.fail_if_no_peer_cert = true`), mesmo com `AGENT_ID`/`AGENT_TOKEN` corretos.
 
 **RabbitMQ:** listener 5671 + `auth_mechanisms = PLAIN, EXTERNAL` em `deploy/rabbitmq/rabbitmq.conf`. Plugin `rabbitmq_auth_mechanism_ssl` habilitado em `deploy/rabbitmq/enabled_plugins`.
 
