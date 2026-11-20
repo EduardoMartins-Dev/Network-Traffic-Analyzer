@@ -10,6 +10,7 @@
  * ========================================================================= */
 
 #include "nta_abuse.h"
+#include "nta_ipclass.h"
 #include "cJSON.h"
 
 #include <curl/curl.h>
@@ -85,18 +86,6 @@ static void load_env_file(const char *path) {
         if (*k && !getenv(k)) setenv(k, v, 0);
     }
     fclose(fp);
-}
-
-/* -------------------------------------------------------------------------- *
- * IP privado — mesma lista do nta_geoip.c                                    *
- * -------------------------------------------------------------------------- */
-static int is_private_ip(const char *ip) {
-    if (!ip || !*ip) return 1;
-    if (strncmp(ip, "127.",     4) == 0) return 1;
-    if (strncmp(ip, "192.168.", 8) == 0) return 1;
-    if (strncmp(ip, "10.",      3) == 0) return 1;
-    if (strncmp(ip, "172.",     4) == 0) return 1;
-    return 0;
 }
 
 /* FNV-1a 32-bit */
@@ -280,7 +269,7 @@ static int http_query_locked(NtaAbuse *a, const char *ip) {
  * -------------------------------------------------------------------------- */
 int nta_abuse_score(NtaAbuse *a, const char *ip) {
     if (!a || !ip || !*ip)   return -1;
-    if (is_private_ip(ip))   return -1;
+    if (nta_ip_is_private(ip)) return -1;
 
     time_t now = time(NULL);
 
