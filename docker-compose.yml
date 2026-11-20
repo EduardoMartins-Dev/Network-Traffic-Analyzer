@@ -91,6 +91,13 @@ services:
       # alertas só são entregues com valores reais — ver .env.example.
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-telegram-disabled}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-0}
+      # Canais extras: quando vazios, usam placeholders (.invalid, não resolvem).
+      # Só recebem alertas se NTA_ALERT_CANAIS os listar — ver notification-policies.yaml.
+      - NTA_ALERT_CANAIS=${NTA_ALERT_CANAIS:-}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-http://slack-disabled.invalid/}
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-http://discord-disabled.invalid/}
+      - NTFY_URL=${NTFY_URL:-http://ntfy-disabled.invalid/}
+      - NTFY_ACCESS_TOKEN=${NTFY_ACCESS_TOKEN:-}
     depends_on:
       - influxdb
       - gf-renderer
