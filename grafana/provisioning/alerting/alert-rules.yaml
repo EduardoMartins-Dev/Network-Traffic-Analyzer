@@ -172,3 +172,64 @@ groups:
         labels:
           severity: warning
           nta_canais: "${NTA_ALERT_CANAIS}"
+
+      # Host offline: uma instância por agent_id. Idade = agora - último pipeline_metrics.
+      # Janela de 300 s (5 min) contra AGENT_METRICS_INTERVAL_SEC=10 s (folga de 30x).
+      # Um agente parado some do resultado do Flux; por isso a consulta olha as últimas
+      # 24 h, e o alerta resolve sozinho se o agente ficar mais de 24 h sem enviar.
+      # noDataState OK: sem nenhum agente nas últimas 24 h (stack nova) não há o que alertar.
+      - uid: nta-host-offline
+        title: Agente sem enviar métricas (host offline)
+        condition: THRESHOLD
+        data:
+          - refId: QUERY
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            datasourceUid: influxdb-nta
+            model:
+              refId: QUERY
+              query: |
+                from(bucket: "network_traffic")
+                  |> range(start: -24h)
+                  |> filter(fn: (r) => r._measurement == "pipeline_metrics")
+                  |> group(columns: ["agent_id"])
+                  |> max(column: "_time")
+                  |> map(fn: (r) => ({r with _value: float(v: int(v: now()) - int(v: r._time)) / 1000000000.0}))
+                  |> keep(columns: ["_time", "_value", "agent_id"])
+          - refId: REDUCE
+            datasourceUid: __expr__
+            model:
+              refId: REDUCE
+              type: reduce
+              expression: QUERY
+              reducer: last
+              settings:
+                mode: replaceNN
+                replaceWithValue: 0
+          - refId: THRESHOLD
+            datasourceUid: __expr__
+            model:
+              refId: THRESHOLD
+              type: threshold
+              expression: REDUCE
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [300]
+                  operator:
+                    type: and
+                  query:
+                    params: [REDUCE]
+                  reducer:
+                    type: last
+                    params: []
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: Agente sem enviar métricas há mais de 5 minutos.
+          description: "O agente {{ $labels.agent_id }} parou de publicar pipeline_metrics. Verifique o processo do agente, a conexão com o RabbitMQ e o nta-server."
+        labels:
+          severity: warning
+          nta_canais: "${NTA_ALERT_CANAIS}"
