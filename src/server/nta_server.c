@@ -128,7 +128,7 @@ static void on_signal(int sig) {
 typedef struct {
     NtaInflux  *inf;
     NtaGeo     *geo;            /* shared, pode ser NULL */
-    NtaIoc     *ioc;            /* shared, pode ser NULL (v8.0 M3) */
+    NtaIocStore *ioc_store;     /* shared; tabela ativa lida por mensagem (B03) */
     NtaAbuse   *abuse;          /* shared, pode ser NULL (v8.0 M4) */
     NtaAmqp    *amqp;           /* per-worker, mesmo do consumer */
     const char *narrator_queue;
@@ -179,8 +179,12 @@ static void republish_if_high(TrafficCtx *ctx, const cJSON *evt,
 static void traffic_handler(const char *body, size_t len,
                             const char *agent_id, void *user_ctx) {
     TrafficCtx *ctx = (TrafficCtx *)user_ctx;
-    if (nta_influx_write_traffic(ctx->inf, ctx->geo, ctx->ioc, ctx->abuse,
-                                  body, len, agent_id) != 0) {
+    int ioc_slot;
+    NtaIoc *ioc = nta_ioc_store_acquire(ctx->ioc_store, &ioc_slot);
+    int rc = nta_influx_write_traffic(ctx->inf, ctx->geo, ioc, ctx->abuse,
+                                      body, len, agent_id);
+    nta_ioc_store_release(ctx->ioc_store, ioc_slot);
+    if (rc != 0) {
         fprintf(stderr, "[MSG] descarte agent=%s len=%zu (escrita falhou)\n",
                 agent_id, len);
         return;
@@ -247,7 +251,7 @@ typedef struct {
     int             worker_id;
     const NtaConfig *cfg;
     NtaGeo         *geo;       /* shared */
-    NtaIoc         *ioc;       /* shared (v8.0 M3) */
+    NtaIocStore    *ioc_store; /* shared (v8.0 M3, recarga B03) */
     NtaAbuse       *abuse;     /* shared (v8.0 M4) */
     int             abuse_min; /* threshold p/ republish narrator */
     NtaWhois       *whois;     /* shared (v8.0 M5) — só usado pelo narrator worker */
@@ -290,7 +294,7 @@ static void *worker_main(void *arg) {
         TrafficCtx ctx = {
             .inf            = &w->influx,
             .geo            = w->geo,
-            .ioc            = w->ioc,
+            .ioc_store      = w->ioc_store,
             .abuse          = w->abuse,
             .amqp           = &w->amqp,
             .narrator_queue = w->cfg->narrator_queue,
@@ -385,14 +389,15 @@ typedef struct {
     pthread_mutex_t mu;
     const NtaConfig *cfg;
     NtaGeo         *geo;
-    NtaIoc         *ioc;         /* shared (v8.0 M3) */
+    NtaIocStore   *ioc_store;   /* shared (v8.0 M3, recarga B03) */
     NtaAbuse       *abuse;       /* shared (v8.0 M4) */
     int             abuse_min;
     int             next_id;     /* contador monotônico p/ worker_id */
 } TrafficPool;
 
 static int pool_init(TrafficPool *p, const NtaConfig *cfg, NtaGeo *geo,
-                     NtaIoc *ioc, NtaAbuse *abuse, int abuse_min, int max) {
+                     NtaIocStore *ioc_store, NtaAbuse *abuse, int abuse_min,
+                     int max) {
     memset(p, 0, sizeof(*p));
     p->slots  = calloc((size_t)max, sizeof(Worker));
     p->tids   = calloc((size_t)max, sizeof(pthread_t));
@@ -401,7 +406,7 @@ static int pool_init(TrafficPool *p, const NtaConfig *cfg, NtaGeo *geo,
     p->max       = max;
     p->cfg       = cfg;
     p->geo       = geo;
-    p->ioc       = ioc;
+    p->ioc_store = ioc_store;
     p->abuse     = abuse;
     p->abuse_min = abuse_min;
     pthread_mutex_init(&p->mu, NULL);
@@ -419,7 +424,7 @@ static int pool_spawn_one_locked(TrafficPool *p) {
     w->worker_id = p->next_id++;
     w->cfg       = p->cfg;
     w->geo       = p->geo;
-    w->ioc       = p->ioc;
+    w->ioc_store = p->ioc_store;
     w->abuse     = p->abuse;
     w->abuse_min = p->abuse_min;
     atomic_init(&w->stop, 0);
@@ -502,10 +507,39 @@ static void pool_destroy(TrafficPool *p) {
 }
 
 /* -------------------------------------------------------------------------- *
+ * Recarga do IoC por SIGHUP (B03). SIGHUP fica bloqueado em todas as threads *
+ * (ver main); esta thread espera por ele com sigwait e recarrega o store.    *
+ * Só sai quando main pede (flag + pthread_kill), para não virar alvo de      *
+ * pthread_kill depois de terminada.                                          *
+ * -------------------------------------------------------------------------- */
+static atomic_int g_ioc_reload_quit = 0;
+
+static void *ioc_reload_main(void *arg) {
+    NtaIocStore *store = (NtaIocStore *)arg;
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGHUP);
+    for (;;) {
+        int sig = 0;
+        if (sigwait(&set, &sig) != 0) break;
+        if (atomic_load(&g_ioc_reload_quit)) break;
+        nta_ioc_store_reload(store);
+    }
+    return NULL;
+}
+
+/* -------------------------------------------------------------------------- *
  * main                                                                       *
  * -------------------------------------------------------------------------- */
 int main(int argc, char *argv[]) {
     (void)argc; (void)argv;
+
+    /* SIGHUP bloqueado desde o início (B03): sem handler ele mataria o processo
+     * se chegasse antes da thread de recarga. Threads herdam a máscara. */
+    sigset_t hup_set;
+    sigemptyset(&hup_set);
+    sigaddset(&hup_set, SIGHUP);
+    pthread_sigmask(SIG_BLOCK, &hup_set, NULL);
 
     NtaConfig cfg;
     nta_config_load(&cfg);
@@ -534,8 +568,14 @@ int main(int argc, char *argv[]) {
                 cfg.geoip_db_path, cfg.geoip_asn_db_path);
     }
 
-    NtaIoc *ioc = nta_ioc_load(cfg.ioc_path);
-    if (!ioc) {
+    NtaIocStore *ioc_store = nta_ioc_store_open(cfg.ioc_path);
+    if (!ioc_store) {
+        fprintf(stderr, "✗ falha ao criar store do IoC — abortando\n");
+        nta_influx_global_cleanup();
+        return 1;
+    }
+    int ioc_on = nta_ioc_store_size(ioc_store) > 0;
+    if (!ioc_on) {
         fprintf(stderr, "⚠ IoC desabilitado (path=%s) — sem tags ioc_hit. "
                 "Veja deploy/ioc/blocklist.json.example\n", cfg.ioc_path);
     }
@@ -576,12 +616,12 @@ int main(int argc, char *argv[]) {
     if (pool_max < cfg.num_workers) pool_max = cfg.num_workers;
 
     TrafficPool pool;
-    if (pool_init(&pool, &cfg, geo, ioc, abuse,
+    if (pool_init(&pool, &cfg, geo, ioc_store, abuse,
                   abuse_cfg.min_republish_score, pool_max) != 0) {
         fprintf(stderr, "✗ pool_init falhou\n");
         nta_whois_close(whois);
         nta_abuse_close(abuse);
-        nta_ioc_close(ioc);
+        nta_ioc_store_close(ioc_store);
         nta_geo_close(geo);
         nta_influx_global_cleanup();
         return 1;
@@ -641,14 +681,21 @@ int main(int argc, char *argv[]) {
         if (!scaler_ok) fprintf(stderr, "[SCALER] pthread_create falhou\n");
     }
 
-    /* Restaura máscara na main pra receber SIGINT/SIGTERM. */
+    /* Recarga do IoC por SIGHUP (B03). */
+    pthread_t ioc_reload_tid;
+    int ioc_reload_ok = (pthread_create(&ioc_reload_tid, NULL,
+                                         ioc_reload_main, ioc_store) == 0);
+    if (!ioc_reload_ok) fprintf(stderr, "[IOC] pthread_create (reload) falhou — SIGHUP sem efeito\n");
+
+    /* Restaura máscara na main pra receber SIGINT/SIGTERM. SIGHUP continua
+     * bloqueado: quem o consome é a thread de recarga. */
     pthread_sigmask(SIG_SETMASK, &prev_set, NULL);
 
     fprintf(stderr, "▶ %d traffic + %d metrics + %d narrator + %d scaler — '%s' → InfluxDB%s%s%s%s (Ctrl+C p/ parar)\n",
             pool_size_cb(&pool), metrics_ok ? 1 : 0, narrator_ok ? 1 : 0,
             scaler_ok ? 1 : 0, cfg.queue_name,
             geo   ? " (+GeoIP)" : "",
-            ioc   ? " (+IoC)"   : "",
+            ioc_on ? " (+IoC)"  : "",
             abuse ? " (+Abuse)" : "",
             whois ? " (+WHOIS)" : "");
 
@@ -657,13 +704,18 @@ int main(int argc, char *argv[]) {
     if (metrics_ok)  pthread_join(metrics_tid,  NULL);
     if (narrator_ok) pthread_join(narrator_tid, NULL);
     if (scaler_ok)   pthread_join(scaler_tid,   NULL);
+    if (ioc_reload_ok) {
+        atomic_store(&g_ioc_reload_quit, 1);
+        pthread_kill(ioc_reload_tid, SIGHUP);   /* acorda o sigwait */
+        pthread_join(ioc_reload_tid, NULL);
+    }
 
     nta_health_stop(&health);
 
     pool_destroy(&pool);
     nta_whois_close(whois);
     nta_abuse_close(abuse);
-    nta_ioc_close(ioc);
+    nta_ioc_store_close(ioc_store);
     nta_geo_close(geo);
     nta_influx_global_cleanup();
 

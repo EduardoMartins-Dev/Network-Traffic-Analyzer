@@ -9,9 +9,12 @@
 #include "nta_ioc.h"
 #include "cJSON.h"
 
+#include <arpa/inet.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define IOC_BUCKETS  8192   /* suporta ~30k IPs c/ load factor < 4 */
 #define IP_KEY_MAX   46
@@ -63,6 +66,10 @@ static char *slurp_file(const char *path, size_t *out_len) {
  * -------------------------------------------------------------------------- */
 static int ioc_insert(NtaIoc *ioc, const char *ip, const char *list_name) {
     if (strlen(ip) >= IP_KEY_MAX) return -1;
+    /* Só entra IP de verdade: lixo num feed não pode virar tabela válida. */
+    unsigned char addr[16];
+    if (inet_pton(AF_INET, ip, addr) != 1 && inet_pton(AF_INET6, ip, addr) != 1)
+        return -1;
     unsigned h = hash_ip(ip) % IOC_BUCKETS;
     /* Dedup dentro do mesmo bucket — primeira lista a inserir vence. */
     for (IocEntry *e = ioc->buckets[h]; e; e = e->next) {
@@ -186,4 +193,100 @@ void nta_ioc_close(NtaIoc *ioc) {
         free(ioc->list_names);
     }
     free(ioc);
+}
+
+/* ========================================================================== *
+ *  Store com recarga (B03)                                                   *
+ *                                                                            *
+ *  Dois slots. `active` aponta o slot publicado. Leitor: incrementa refs do  *
+ *  slot ativo, confirma que `active` não mudou e só então usa a tabela. Se  *
+ *  mudou, desfaz e tenta de novo. Escritor (único): escreve no slot inativo  *
+ *  depois de ele ficar sem leitores, publica `active`, espera os leitores do *
+ *  slot antigo e libera a tabela antiga. Todos os acessos são seq_cst.       *
+ * ========================================================================== */
+
+struct NtaIocStore {
+    struct {
+        _Atomic(NtaIoc *) ioc;    /* mutado só pelo escritor, com refs == 0 */
+        atomic_int        refs;   /* leitores que estão dentro do slot */
+    } slot[2];
+    atomic_int active;            /* índice do slot publicado */
+    char      *path;
+};
+
+static void wait_no_readers(atomic_int *refs) {
+    struct timespec pausa = { 0, 1000000 };  /* 1 ms */
+    while (atomic_load(refs) != 0) nanosleep(&pausa, NULL);
+}
+
+NtaIocStore *nta_ioc_store_open(const char *path) {
+    NtaIocStore *s = calloc(1, sizeof(*s));
+    if (!s) return NULL;
+    if (path) {
+        s->path = strdup(path);
+        if (!s->path) { free(s); return NULL; }
+    }
+    for (int i = 0; i < 2; i++) {
+        atomic_init(&s->slot[i].ioc, NULL);
+        atomic_init(&s->slot[i].refs, 0);
+    }
+    atomic_init(&s->slot[0].ioc, nta_ioc_load(s->path));
+    atomic_init(&s->active, 0);
+    return s;
+}
+
+NtaIoc *nta_ioc_store_acquire(NtaIocStore *s, int *slot) {
+    for (;;) {
+        int i = atomic_load(&s->active);
+        atomic_fetch_add(&s->slot[i].refs, 1);
+        if (atomic_load(&s->active) == i) {
+            *slot = i;
+            return atomic_load(&s->slot[i].ioc);
+        }
+        /* Trocou entre o load e o incremento: solta e tenta o slot novo. */
+        atomic_fetch_sub(&s->slot[i].refs, 1);
+    }
+}
+
+void nta_ioc_store_release(NtaIocStore *s, int slot) {
+    atomic_fetch_sub(&s->slot[slot].refs, 1);
+}
+
+int nta_ioc_store_reload(NtaIocStore *s) {
+    NtaIoc *fresh = s->path ? nta_ioc_load(s->path) : NULL;
+    if (!fresh) {
+        fprintf(stderr, "[IOC] reload rejeitado (%s) — lista anterior "
+                "continua ativa\n", s->path ? s->path : "sem path");
+        return -1;
+    }
+
+    int old  = atomic_load(&s->active);
+    int next = 1 - old;
+    /* `next` está inativo; só leitores que erraram a checagem podem estar
+     * nele, e eles saem logo sem usar a tabela. */
+    wait_no_readers(&s->slot[next].refs);
+    atomic_store(&s->slot[next].ioc, fresh);
+    atomic_store(&s->active, next);   /* publica: leitores novos veem a nova */
+
+    /* Leitores que pegaram a tabela antiga antes da troca ainda podem usá-la. */
+    wait_no_readers(&s->slot[old].refs);
+    nta_ioc_close(atomic_exchange(&s->slot[old].ioc, NULL));
+
+    fprintf(stderr, "[IOC] lista recarregada: %d IPs\n", nta_ioc_size(fresh));
+    return 0;
+}
+
+int nta_ioc_store_size(NtaIocStore *s) {
+    int slot;
+    NtaIoc *ioc = nta_ioc_store_acquire(s, &slot);
+    int n = nta_ioc_size(ioc);
+    nta_ioc_store_release(s, slot);
+    return n;
+}
+
+void nta_ioc_store_close(NtaIocStore *s) {
+    if (!s) return;
+    for (int i = 0; i < 2; i++) nta_ioc_close(atomic_load(&s->slot[i].ioc));
+    free(s->path);
+    free(s);
 }

@@ -21,11 +21,12 @@
  *     ]
  *   }
  *
+ * Entradas que não são IP (inet_pton) são descartadas no parse.
+ *
  * Limitações conhecidas:
  *   - Apenas IPs (src_ip). Domínios/hashes ficam pra quando o analyzer
  *     emitir esses campos no evento JSON.
- *   - Reload em runtime (SIGHUP) não implementado — para atualizar,
- *     reiniciar nta-server. */
+ *   - Recarga em runtime: ver NtaIocStore abaixo (SIGHUP, B03). */
 typedef struct NtaIoc NtaIoc;
 
 /* Abre + parseia o arquivo. Retorna NULL se path vazio, arquivo ausente,
@@ -41,5 +42,36 @@ const char *nta_ioc_match_ip(const NtaIoc *ioc, const char *ip);
 int nta_ioc_size(const NtaIoc *ioc);
 
 void nta_ioc_close(NtaIoc *ioc);
+
+/* -------------------------------------------------------------------------- *
+ * Armazenamento com recarga (B03).                                           *
+ *                                                                            *
+ * Workers leem com nta_ioc_store_acquire()/nta_ioc_store_release() em volta *
+ * de cada mensagem (sem mutex: dois contadores atômicos por slot). Um único  *
+ * escritor (a thread de SIGHUP) chama nta_ioc_store_reload(): a tabela nova  *
+ * é publicada por troca atômica, e só depois de os leitores da antiga terem  *
+ * saído ela é liberada. Arquivo inválido, truncado ou sem IPs não substitui  *
+ * a tabela ativa.                                                            *
+ * -------------------------------------------------------------------------- */
+typedef struct NtaIocStore NtaIocStore;
+
+/* Sempre devolve um store, mesmo se a carga inicial falhar (IoC fica
+ * desabilitado até um reload válido). NULL só em falta de memória. */
+NtaIocStore *nta_ioc_store_open(const char *path);
+
+/* Devolve a tabela ativa (pode ser NULL) e grava em *slot o token a passar
+ * para nta_ioc_store_release(). A tabela só pode ser usada entre os dois. */
+NtaIoc *nta_ioc_store_acquire(NtaIocStore *s, int *slot);
+void    nta_ioc_store_release(NtaIocStore *s, int slot);
+
+/* Recarrega do path configurado. 0 = trocada; -1 = rejeitada (a anterior
+ * continua ativa). Deve ser chamada por uma única thread. */
+int nta_ioc_store_reload(NtaIocStore *s);
+
+/* IPs da tabela ativa (0 se desabilitado). */
+int nta_ioc_store_size(NtaIocStore *s);
+
+/* Libera tudo. Só depois que nenhuma thread usar o store. */
+void nta_ioc_store_close(NtaIocStore *s);
 
 #endif /* NTA_IOC_H */
