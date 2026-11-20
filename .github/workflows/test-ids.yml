@@ -76,6 +76,30 @@ jobs:
           ctest --test-dir build --output-on-failure
           ./build/NetworkTrafficAnalyzer --replay-dir tests/pcaps/
 
+  # ThreadSanitizer no NtaIocStore (B31): leitores x recarga. NÃO bloqueante
+  # (continue-on-error): um relatório do TSan aparece como falha deste job, sem
+  # reprovar o PR. Só o test_ioc, sem nta-server (sem libcurl/libmaxminddb).
+  tsan-ioc:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y cmake build-essential
+
+      - name: Build test_ioc (ThreadSanitizer)
+        run: |
+          cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DNTA_BUILD_SERVER=OFF \
+            -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+          cmake --build build-tsan --target test_ioc --parallel
+
+      - name: Run test_ioc under TSan
+        run: ctest --test-dir build-tsan -R '^test_ioc$' --output-on-failure
+
   # Fuzzing do parser (B06): libFuzzer + ASan/UBSan sobre frames Ethernet, com
   # corpus inicial de tests/pcaps. Smoke curto e NÃO bloqueante (continue-on-error):
   # um crash aparece como falha do job e o caso fica em artefato, para virar
