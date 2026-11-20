@@ -2,7 +2,10 @@
 # test_mitre_layer.py — impede divergência entre mitre_layer.py e attack_to_mitre().
 # Execução: python3 scripts/test_mitre_layer.py   (stdlib apenas)
 import json
+import os
 import re
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -40,6 +43,27 @@ class RealSourceTest(unittest.TestCase):
         self.assertEqual(data["domain"], "enterprise-attack")
         self.assertEqual(data["versions"]["layer"], "4.5")
         self.assertTrue(data["techniques"])
+
+
+class StdoutEncodingTest(unittest.TestCase):
+    """Redirecionar o stdout (> arquivo) precisa dar UTF-8 válido, qualquer que seja o console."""
+
+    def test_redirected_stdout_is_valid_utf8_json(self):
+        # Remove overrides de codificação do ambiente para reproduzir o caso do console local.
+        env = os.environ.copy()
+        env.pop("PYTHONIOENCODING", None)
+        env.pop("PYTHONUTF8", None)
+        proc = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve().parent / "mitre_layer.py")],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", "replace"))
+        text = proc.stdout.decode("utf-8")  # levanta UnicodeDecodeError se não for UTF-8
+        data = json.loads(text)
+        ids = {t["techniqueID"] for t in data["techniques"]}
+        for tid in REQUIRED:
+            self.assertIn(tid, ids)
+        self.assertIn("Técnicas", data["description"])
 
 
 class ParserGuardTest(unittest.TestCase):
