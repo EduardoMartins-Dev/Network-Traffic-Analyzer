@@ -165,3 +165,31 @@ if(NTA_BUILD_TESTS)
         add_test(NAME test_whois COMMAND test_whois)
     endif()
 endif()
+
+# --- B02: BENCHMARK DE THROUGHPUT pps (opcional, desligado por padrão) -------
+# Pipeline real do agente sem rede, sem privilégio e sem RabbitMQ (ver
+# tests/bench/bench_pps.c). Não entra no ctest.
+#   cmake -S . -B build-bench -DNTA_BUILD_BENCH=ON && cmake --build build-bench
+option(NTA_BUILD_BENCH "Compila o benchmark de throughput pps (tests/bench)" OFF)
+if(NTA_BUILD_BENCH)
+    find_package(Threads REQUIRED)
+
+    add_executable(bench_pps tests/bench/bench_pps.c
+            src/agent/core/pipeline.c
+            src/agent/core/ringbuf.c
+            src/agent/capture/capture.c
+            src/agent/analysis/analyzer.c
+            src/agent/analysis/collector.c
+            ${CJSON_DIR}/cJSON.c
+    )
+    target_include_directories(bench_pps PRIVATE ${AGENT_INC})
+
+    if(WIN32)
+        target_sources(bench_pps PRIVATE src/agent/platform/netif_win32.c)
+        target_compile_definitions(bench_pps PRIVATE _WIN32_WINNT=0x0601)
+        target_link_libraries(bench_pps PRIVATE Ws2_32 Iphlpapi pthread)
+    else()
+        target_sources(bench_pps PRIVATE src/agent/platform/netif_posix.c)
+        target_link_libraries(bench_pps PRIVATE m Threads::Threads)
+    endif()
+endif()
