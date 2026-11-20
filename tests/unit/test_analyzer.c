@@ -195,6 +195,54 @@ static void test_pacotes_malformados(void) {
     CHECK(collector_count() == 0);               /* nada malformado vira alerta */
 }
 
+/* Pacote UDP com payload DNS de `dns_len` bytes. Consulta: src=cliente, dst=
+ * servidor (porta 53). Resposta: src=servidor (porta 53), dst=cliente. QR fica
+ * no bit 7 do byte 2 do cabeçalho DNS. */
+static void udp_dns(const char *src, const char *dst, int resp, int dns_len, time_t ts) {
+    uint8_t buf[512];
+    int udp_len = 8 + dns_len;
+    memset(buf, 0, sizeof(buf));
+    buf[12] = 0x08; buf[13] = 0x00;                      /* EtherType IPv4 */
+    nta_ipv4_hdr *ip = (nta_ipv4_hdr *)(buf + NTA_ETH_HLEN);
+    ip->ver_ihl = 0x45;
+    ip->tot_len = htons((uint16_t)(20 + udp_len));
+    ip->ttl     = 64;
+    ip->proto   = NTA_PROTO_UDP;
+    inet_pton(AF_INET, src, &ip->saddr);
+    inet_pton(AF_INET, dst, &ip->daddr);
+    nta_udp_hdr *u = (nta_udp_hdr *)(buf + NTA_ETH_HLEN + 20);
+    u->sport = htons(resp ? 53 : 40000);
+    u->dport = htons(resp ? 40000 : 53);
+    u->len   = htons((uint16_t)udp_len);
+    buf[NTA_ETH_HLEN + 20 + 8 + 2] = resp ? 0x81 : 0x01;  /* QR + RD */
+    analyze_packet(buf, NTA_ETH_HLEN + 20 + udp_len, ts);
+}
+
+/* Refletor que só envia respostas: as consultas saem com o IP da vítima como
+ * origem (forjada) e chegam ao refletor. O alerta tem que sair pelo IP do
+ * refletor, e a vítima não pode ser marcada. */
+static void test_refletor_puro_dispara(void) {
+    fresh();
+    const char *vit = "192.168.1.10", *ref = "203.0.113.53";
+    for (int i = 0; i < 3; i++) udp_dns(vit, ref, 0, 29, T0 + i);     /* 71 B cada */
+    for (int i = 0; i < 10; i++) udp_dns(ref, vit, 1, 242, T0 + 3 + i); /* 284 B cada */
+    CHECK(detections("AMPLIFICATION", ref) >= 1);
+    CHECK(detections("AMPLIFICATION", vit) == 0);
+}
+
+/* DNS normal: cada consulta de 71 B gera resposta de 128 B (1,8x). Nada pode
+ * disparar, nem no cliente nem no resolvedor. */
+static void test_dns_normal_nao_dispara(void) {
+    fresh();
+    const char *cli = "198.51.100.20", *res = "203.0.113.53";
+    for (int i = 0; i < 20; i++) {
+        udp_dns(cli, res, 0, 29, T0 + i);
+        udp_dns(res, cli, 1, 86, T0 + i);
+    }
+    CHECK(detections("AMPLIFICATION", res) == 0);
+    CHECK(detections("AMPLIFICATION", cli) == 0);
+}
+
 static void test_home_net(void) {
     CHECK(analyzer_add_home_cidr("300.1.1.1/8") == -1);
     CHECK(analyzer_add_home_cidr("10.0.0.0/33") == -1);
@@ -206,6 +254,14 @@ static void test_home_net(void) {
     CHECK(detections("NULL_SCAN", "10.9.9.9") == 0);     /* ignorado: HOME_NET */
     for (int i = 0; i < 5; i++) tcp("11.9.9.9", (uint16_t)(80 + i), 0, T0);
     CHECK(detections("NULL_SCAN", "11.9.9.9") == 3);     /* fora do /8: 3º, 4º e 5º alertam */
+
+    /* Limitação documentada: a vítima em HOME_NET envia consultas forjadas com
+     * origem própria, e o skip de HOME_NET as descarta antes da contagem. Sem
+     * request visível, o refletor fica sem denominador e não dispara. */
+    fresh();
+    for (int i = 0; i < 3; i++) udp_dns("10.1.1.1", "11.9.9.9", 0, 29, T0 + i);
+    for (int i = 0; i < 10; i++) udp_dns("11.9.9.9", "10.1.1.1", 1, 242, T0 + 3 + i);
+    CHECK(detections("AMPLIFICATION", "11.9.9.9") == 0);
 }
 
 int main(void) {
@@ -216,6 +272,8 @@ int main(void) {
     RUN(test_kill_chain_completa);
     RUN(test_reset_limpa_estado);
     RUN(test_pacotes_malformados);
+    RUN(test_refletor_puro_dispara);
+    RUN(test_dns_normal_nao_dispara);
     RUN(test_home_net);            /* por último: HOME_NET não é zerado pelo reset */
     TEST_EXIT();
 }

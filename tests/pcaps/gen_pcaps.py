@@ -17,6 +17,8 @@ ATTACKER = bytes([192, 168, 1, 100])
 VICTIM = bytes([192, 168, 1, 10])
 GATEWAY = bytes([192, 168, 1, 1])
 RESOLVER = bytes([8, 8, 8, 8])
+REFLECTOR = bytes([203, 0, 113, 53])   # TEST-NET-3: refletor do pcap de refletor puro
+CLIENT = bytes([198, 51, 100, 20])     # cliente externo do pcap de DNS normal
 ATTACKER_MAC = bytes([0x02, 0x42, 0xAC, 0x11, 0x00, 0x64])
 BROADCAST_MAC = b"\xff" * 6
 BASE_TS = 1700000000  # timestamp fixo -> pcaps idênticos a cada geração
@@ -131,6 +133,25 @@ def main() -> None:
     amp += [udp(53, 40000 + i, dns_msg(i, 0x8180, "example.com", b"A" * 200), ATTACKER, VICTIM)
             for i in range(10)]
     write_pcap("amplification.pcap", amp, 0.1)
+
+    # Refletor DNS puro: 203.0.113.53 só envia respostas. As consultas saem com
+    # o IP da vítima (192.168.1.10) como origem (spoofing), então o analyzer
+    # precisa contá-las no IP de DESTINO (o refletor). 3 consultas de ~71 B
+    # (213 B) e 10 respostas de 284 B (2840 B, 13x): dispara na 8ª resposta.
+    refl = [udp(40000 + i, 53, dns_msg(i, 0x0100, "example.com"), VICTIM, REFLECTOR)
+            for i in range(3)]
+    refl += [udp(53, 40000 + i, dns_msg(i, 0x8180, "example.com", b"A" * 200), REFLECTOR, VICTIM)
+             for i in range(10)]
+    write_pcap("amplification-reflector.pcap", refl, 0.1)
+
+    # DNS normal (falso positivo): cliente externo faz 20 consultas de ~75 B e
+    # recebe 20 respostas de ~128 B (razão ~1,7x, bem abaixo de 10x). Gabarito
+    # vazio: qualquer alerta aparece na saída do replay como detecção extra.
+    normal = []
+    for i in range(20):
+        normal.append(udp(40000 + i, 53, dns_msg(i, 0x0100, "www.example.com"), CLIENT, REFLECTOR))
+        normal.append(udp(53, 40000 + i, dns_msg(i, 0x8180, "www.example.com", b"x" * 40), REFLECTOR, CLIENT))
+    write_pcap("dns-normal.pcap", normal, 0.2)
 
     # Malformados: nenhum pode gerar leitura fora do buffer nem detecção
     # (gabarito vazio; roda sob ASan/UBSan no CI).
