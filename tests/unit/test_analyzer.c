@@ -616,6 +616,270 @@ static void test_exaustao_dns_ipv6_nao_cega_ipv4(void) {
     CHECK(detections("PORT_SCAN", scan) >= 1);
 }
 
+/* ------------------------------------------------------------------------- *
+ * VLAN (802.1Q / 802.1ad) e fragmentação IPv4 (B10).                        *
+ * add_tags() insere tags depois dos MACs; o EtherType original fica depois  *
+ * delas. Os quadros são montados em buffers de 128 bytes (cabem as 4 tags). *
+ * ------------------------------------------------------------------------- */
+#define IP4_MF 0x2000u               /* bit "more fragments" do frag_off */
+
+static int add_tags(uint8_t *buf, int len, const uint16_t *tpids, int ntags) {
+    if (ntags == 0) return len;
+    memmove(buf + 12 + 4 * ntags, buf + 12, (size_t)(len - 12));
+    for (int i = 0; i < ntags; i++) {
+        buf[12 + 4 * i] = (uint8_t)(tpids[i] >> 8);
+        buf[13 + 4 * i] = (uint8_t)(tpids[i] & 0xFF);
+        buf[14 + 4 * i] = 0x00;                       /* PCP 0 / DEI 0 */
+        buf[15 + 4 * i] = (uint8_t)(i + 1);           /* VID = i + 1 */
+    }
+    return len + 4 * ntags;
+}
+
+/* TCP sobre IPv4 com `ntags` tags (TPIDs em `tpids`; ntags = 0 sem tag). */
+static int tcp_build(uint8_t *buf, const char *src, uint16_t dport, uint8_t flags,
+                     const uint16_t *tpids, int ntags) {
+    int len = build_ip(buf, src, NTA_PROTO_TCP, 20);
+    nta_tcp_hdr *t = (nta_tcp_hdr *)(buf + NTA_ETH_HLEN + 20);
+    t->sport    = htons(40000);
+    t->dport    = htons(dport);
+    t->data_off = 5 << 4;
+    t->flags    = flags;
+    return add_tags(buf, len, tpids, ntags);
+}
+
+static void tcp_tag(const char *src, uint16_t dport, uint8_t flags,
+                    const uint16_t *tpids, int ntags, time_t ts) {
+    uint8_t buf[128];
+    int len = tcp_build(buf, src, dport, flags, tpids, ntags);
+    analyze_packet(buf, len, ts);
+}
+
+/* ARP reply (op=2) de `mac` reivindicando `ip`, com tags opcionais. */
+static int arp_build(uint8_t *buf, const uint8_t mac[6], const char *ip,
+                     const uint16_t *tpids, int ntags) {
+    memset(buf, 0, 64);
+    memset(buf, 0xFF, 6);                             /* broadcast */
+    memcpy(buf + 6, mac, 6);
+    buf[12] = 0x08; buf[13] = 0x06;                   /* EtherType ARP */
+    uint8_t *a = buf + NTA_ETH_HLEN;
+    a[1] = 1;                                         /* htype Ethernet */
+    a[2] = 0x08;                                      /* ptype IPv4 */
+    a[4] = 6; a[5] = 4;                               /* hlen, plen */
+    a[7] = 2;                                         /* op = reply */
+    memcpy(a + 8, mac, 6);                            /* sender MAC */
+    inet_pton(AF_INET, ip, a + 14);                   /* sender IP */
+    return add_tags(buf, NTA_ETH_HLEN + 28, tpids, ntags);
+}
+
+/* IPv4 fragmento: `frag` é o campo frag_off em ordem de host (MF no bit 13,
+ * offset em unidades de 8 bytes). tot_len = 20 + plen, como o emissor grava.
+ * `total` é o tamanho do quadro: bytes além do datagrama são padding. */
+static int frag_build(uint8_t *buf, const char *src, uint8_t proto, uint16_t frag,
+                      const uint8_t *payload, int plen, int total) {
+    memset(buf, 0, 128);
+    buf[12] = 0x08; buf[13] = 0x00;
+    nta_ipv4_hdr *ip = (nta_ipv4_hdr *)(buf + NTA_ETH_HLEN);
+    ip->ver_ihl  = 0x45;
+    ip->tot_len  = htons((uint16_t)(20 + plen));
+    ip->frag_off = htons(frag);
+    ip->ttl      = 64;
+    ip->proto    = proto;
+    inet_pton(AF_INET, src, &ip->saddr);
+    inet_pton(AF_INET, "192.0.2.1", &ip->daddr);
+    memcpy(buf + NTA_ETH_HLEN + 20, payload, (size_t)plen);
+    return total;
+}
+
+/* Cabeçalho TCP de 20 bytes com porta de destino e flags. */
+static void tcp_seg20(uint8_t seg[20], uint16_t dport, uint8_t flags) {
+    memset(seg, 0, 20);
+    nta_tcp_hdr *t = (nta_tcp_hdr *)seg;
+    t->sport    = htons(40000);
+    t->dport    = htons(dport);
+    t->data_off = 5 << 4;
+    t->flags    = flags;
+}
+
+/* 802.1Q, QinQ e sem tag: o mesmo scan tem que dar o mesmo alerta. */
+static void test_vlan_e_qinq_mesmas_deteccoes(void) {
+    static const uint16_t vlan[] = { NTA_ETH_TYPE_VLAN };
+    static const uint16_t qinq[] = { NTA_ETH_TYPE_QINQ, NTA_ETH_TYPE_VLAN };
+    fresh();
+    for (int p = 0; p < 15; p++) {
+        tcp_tag("198.51.100.70", (uint16_t)(1000 + p), NTA_TH_SYN, NULL, 0, T0 + p);
+        tcp_tag("198.51.100.71", (uint16_t)(1000 + p), NTA_TH_SYN, vlan, 1, T0 + p);
+        tcp_tag("198.51.100.72", (uint16_t)(1000 + p), NTA_TH_SYN, qinq, 2, T0 + p);
+    }
+    CHECK(detections("PORT_SCAN", "198.51.100.70") == 1);
+    CHECK(detections("PORT_SCAN", "198.51.100.71") == 1);
+    CHECK(detections("PORT_SCAN", "198.51.100.72") == 1);
+    CHECK(collector_count() == 3);
+
+    analyzer_stats_t st;
+    analyzer_get_stats(&st);
+    CHECK(st.vlan_frames == 30);                      /* 15 com 1 tag + 15 com 2 */
+    CHECK(st.frag_seen == 0 && st.frag_discarded == 0);
+}
+
+/* ARP com tag: o MAC aprendido sem tag e depois reivindicando outro IP com tag
+ * tem que disparar ARP_SPOOF com o IP reivindicado (offsets do ARP com VLAN). */
+static void test_arp_com_vlan(void) {
+    static const uint16_t vlan[] = { NTA_ETH_TYPE_VLAN };
+    static const uint8_t mac[6] = { 0x02, 0x42, 0xAC, 0x11, 0x00, 0x64 };
+    uint8_t buf[128];
+    fresh();
+    int len = arp_build(buf, mac, "192.168.1.100", NULL, 0);
+    analyze_packet(buf, len, T0);                     /* MAC aprende o IP */
+    len = arp_build(buf, mac, "192.168.1.1", vlan, 1);
+    analyze_packet(buf, len, T0 + 1);
+    CHECK(detections("ARP_SPOOF", "192.168.1.1") == 1);
+}
+
+/* Profundidade: 4 tags (o limite) são analisadas; 5 tags são descartadas. */
+static void test_vlan_profundidade_limite(void) {
+    static const uint16_t four[] = { NTA_ETH_TYPE_QINQ, NTA_ETH_TYPE_VLAN,
+                                     NTA_ETH_TYPE_VLAN, NTA_ETH_TYPE_VLAN };
+    static const uint16_t five[] = { NTA_ETH_TYPE_QINQ, NTA_ETH_TYPE_VLAN,
+                                     NTA_ETH_TYPE_VLAN, NTA_ETH_TYPE_VLAN,
+                                     NTA_ETH_TYPE_VLAN };
+    fresh();
+    /* NULL_SCAN dispara no 3º pacote nulo. */
+    for (int i = 0; i < 3; i++) tcp_tag("198.51.100.80", (uint16_t)(80 + i), 0, four, 4, T0 + i);
+    CHECK(detections("NULL_SCAN", "198.51.100.80") == 1);
+    for (int i = 0; i < 3; i++) tcp_tag("198.51.100.81", (uint16_t)(80 + i), 0, five, 5, T0 + i);
+    CHECK(detections("NULL_SCAN", "198.51.100.81") == 0);
+}
+
+/* Quadro cortado em qualquer byte, inclusive no meio de uma tag: não pode ler
+ * além do que foi entregue (heap de tamanho exato, para o ASan). */
+static void test_vlan_truncada_em_qualquer_byte(void) {
+    static const uint16_t qinq[] = { NTA_ETH_TYPE_QINQ, NTA_ETH_TYPE_VLAN };
+    static const uint16_t five[] = { NTA_ETH_TYPE_QINQ, NTA_ETH_TYPE_VLAN,
+                                     NTA_ETH_TYPE_VLAN, NTA_ETH_TYPE_VLAN,
+                                     NTA_ETH_TYPE_VLAN };
+    fresh();
+    uint8_t pkt[128];
+    int full = tcp_build(pkt, "198.51.100.82", 80, 0, qinq, 2);
+    for (int cut = 1; cut <= full; cut++) feed_exact(pkt, cut);
+
+    int full5 = tcp_build(pkt, "198.51.100.83", 80, 0, five, 5);
+    for (int cut = 1; cut <= full5; cut++) feed_exact(pkt, cut);
+
+    CHECK(collector_count() == 0);                    /* nenhum corte alerta */
+}
+
+/* Fragmento não inicial (offset != 0): o começo do payload parece um TCP SYN
+ * com portas distintas. Antes do B10 virava PORT_SCAN; agora é descartado e
+ * contado. */
+static void test_frag_nao_inicial_nao_vira_l4(void) {
+    fresh();
+    const char *src = "198.51.100.90";
+    uint8_t seg[20], buf[128];
+    for (int i = 0; i < 30; i++) {
+        tcp_seg20(seg, (uint16_t)(1000 + i), NTA_TH_SYN);
+        int len = frag_build(buf, src, NTA_PROTO_TCP, (uint16_t)(1 + i), seg, 20,
+                             NTA_ETH_HLEN + 20 + 20);
+        analyze_packet(buf, len, T0 + i);
+    }
+    CHECK(detections("PORT_SCAN", src) == 0);
+    CHECK(detections("SYN_FLOOD", src) == 0);
+    CHECK(collector_count() == 0);
+
+    analyzer_stats_t st;
+    analyzer_get_stats(&st);
+    CHECK(st.frag_seen == 30);
+    CHECK(st.frag_discarded == 30);
+}
+
+/* Fragmento inicial (offset 0, MF=1) com o cabeçalho TCP inteiro: é analisado. */
+static void test_frag_inicial_com_l4_inteiro_analisado(void) {
+    fresh();
+    const char *src = "198.51.100.91";
+    uint8_t seg[20], buf[128];
+    for (int i = 0; i < 15; i++) {
+        tcp_seg20(seg, (uint16_t)(1000 + i), NTA_TH_SYN);
+        int len = frag_build(buf, src, NTA_PROTO_TCP, (uint16_t)IP4_MF, seg, 20,
+                             NTA_ETH_HLEN + 20 + 20);
+        analyze_packet(buf, len, T0 + i);
+    }
+    CHECK(detections("PORT_SCAN", src) == 1);
+
+    analyzer_stats_t st;
+    analyzer_get_stats(&st);
+    CHECK(st.frag_seen == 15);
+    CHECK(st.frag_discarded == 0);
+}
+
+/* Tiny fragments: o primeiro fragmento tem menos que o cabeçalho TCP. Com 8
+ * bytes (portas e seq), o byte de flags (L4[13]) cai no padding de Ethernet que
+ * vem depois do datagrama. Com 19 bytes, o flag está dentro do fragmento, mas o
+ * cabeçalho TCP não cabe inteiro. Nos dois casos não pode haver alerta. */
+static void test_frag_tiny_nao_le_padding(void) {
+    fresh();
+    const char *pad_src = "198.51.100.92", *short_src = "198.51.100.93";
+    uint8_t seg[20], buf[128];
+
+    for (int i = 0; i < 20; i++) {
+        memset(seg, 0, 8);
+        seg[0] = 0x9C; seg[1] = 0x40;                 /* sport 40000 */
+        seg[2] = (uint8_t)((1000 + i) >> 8); seg[3] = (uint8_t)((1000 + i) & 0xFF);
+        int len = frag_build(buf, pad_src, NTA_PROTO_TCP, (uint16_t)IP4_MF, seg, 8, 60);
+        buf[NTA_ETH_HLEN + 20 + 13] = NTA_TH_SYN;     /* flag no padding (fora do IP) */
+        analyze_packet(buf, len, T0 + i);
+    }
+    CHECK(detections("PORT_SCAN", pad_src) == 0);
+
+    for (int i = 0; i < 20; i++) {
+        tcp_seg20(seg, (uint16_t)(1000 + i), NTA_TH_SYN);   /* 20 bytes: cortado a 19 */
+        int len = frag_build(buf, short_src, NTA_PROTO_TCP, (uint16_t)IP4_MF, seg, 19,
+                             NTA_ETH_HLEN + 20 + 19);
+        analyze_packet(buf, len, T0 + i);
+    }
+    CHECK(detections("PORT_SCAN", short_src) == 0);
+
+    analyzer_stats_t st;
+    analyzer_get_stats(&st);
+    CHECK(st.frag_seen == 40);
+    CHECK(st.frag_discarded == 40);
+}
+
+/* IPv6: fragmento não inicial conta como visto e descartado; o inicial conta só
+ * como visto. Fragmento inicial com payload_len de 16 (8 de fragmento + 8 de L4)
+ * tem o SYN em L4[13], que cai fora do datagrama (quadro de 84 bytes). */
+static void test_ipv6_frag_contadores(void) {
+    fresh();
+    uint8_t buf[128];
+    const char *ip = "2001:db8:a::500";
+    for (int i = 0; i < 3; i++) {
+        int len = build_ip6(buf, ip, IP6_DST, NTA_PROTO_FRAGMENT, 8 + 20);
+        nta_ipv6_frag_hdr *f = (nta_ipv6_frag_hdr *)(buf + IP6_L4);
+        f->next_hdr   = NTA_PROTO_TCP;
+        f->frag_off_m = htons(0x0008);                /* offset 1 (8 bytes) */
+        analyze_packet(buf, len, T0 + i);
+    }
+    analyzer_stats_t st;
+    analyzer_get_stats(&st);
+    CHECK(st.frag_seen == 3);
+    CHECK(st.frag_discarded == 3);
+
+    const char *tiny = "2001:db8:a::501";
+    for (int i = 0; i < 15; i++) {
+        build_ip6(buf, tiny, IP6_DST, NTA_PROTO_FRAGMENT, 8 + 8);
+        nta_ipv6_frag_hdr *f = (nta_ipv6_frag_hdr *)(buf + IP6_L4);
+        f->next_hdr   = NTA_PROTO_TCP;
+        f->frag_off_m = htons(0x0001);                /* offset 0, M = 1 */
+        uint8_t *l4 = buf + IP6_L4 + 8;
+        l4[0] = 0x9C; l4[1] = 0x40;
+        l4[2] = (uint8_t)((1000 + i) >> 8); l4[3] = (uint8_t)((1000 + i) & 0xFF);
+        l4[13] = NTA_TH_SYN;                          /* SYN fora do datagrama */
+        analyze_packet(buf, 84, T0 + i);
+    }
+    CHECK(detections("PORT_SCAN", tiny) == 0);
+    analyzer_get_stats(&st);
+    CHECK(st.frag_seen == 18);
+    CHECK(st.frag_discarded == 18);
+}
+
 /* Por último: HOME_NET IPv6 não é zerado pelo reset, e não afeta os testes
  * acima (o CIDR é 2001:db8:f::/48, que nenhum outro teste usa). */
 static void test_home_net_ipv6(void) {
@@ -650,6 +914,14 @@ int main(void) {
     RUN(test_ipv6_malformados);
     RUN(test_exaustao_origens_ipv6_nao_cega_ipv4);
     RUN(test_exaustao_dns_ipv6_nao_cega_ipv4);
+    RUN(test_vlan_e_qinq_mesmas_deteccoes);
+    RUN(test_arp_com_vlan);
+    RUN(test_vlan_profundidade_limite);
+    RUN(test_vlan_truncada_em_qualquer_byte);
+    RUN(test_frag_nao_inicial_nao_vira_l4);
+    RUN(test_frag_inicial_com_l4_inteiro_analisado);
+    RUN(test_frag_tiny_nao_le_padding);
+    RUN(test_ipv6_frag_contadores);
     RUN(test_home_net);            /* HOME_NET não é zerado pelo reset */
     RUN(test_home_net_ipv6);       /* por último */
     TEST_EXIT();

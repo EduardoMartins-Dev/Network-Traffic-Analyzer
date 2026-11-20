@@ -272,19 +272,26 @@ static void *metrics_thread(void *arg) {
         double   dt         = (now_ms - last_ts_ms) / 1000.0;
         double   eps        = (dt > 0) ? (events_now - last_events) / dt : 0.0;
 
+        analyzer_stats_t as;
+        analyzer_get_stats(&as);
+
         char payload[512];
         snprintf(payload, sizeof(payload),
             "{\"rb_pkt_depth\":%zu,\"rb_evt_depth\":%zu,"
              "\"rb_pkt_overflow\":%llu,\"rb_evt_overflow\":%llu,"
              "\"batches_sent\":%llu,\"events_sent\":%llu,"
-             "\"events_per_sec\":%.2f}",
+             "\"events_per_sec\":%.2f,"
+             "\"vlan_frames\":%llu,\"frag_seen\":%llu,\"frag_discarded\":%llu}",
             rb_size(&g_rb_pkt), rb_size(&g_rb_evt),
             (unsigned long long)rb_overflow(&g_rb_pkt),
             (unsigned long long)rb_overflow(&g_rb_evt),
             (unsigned long long)atomic_load_explicit(&g_batches_sent,
                                                      memory_order_relaxed),
             (unsigned long long)events_now,
-            eps);
+            eps,
+            (unsigned long long)as.vlan_frames,
+            (unsigned long long)as.frag_seen,
+            (unsigned long long)as.frag_discarded);
 
         publisher_send_metrics(payload);
 
