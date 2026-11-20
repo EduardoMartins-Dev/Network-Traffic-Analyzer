@@ -10,25 +10,103 @@
 #include "collector.h"
 
 /* ========================================================================= *
+ * ENDEREÇO DE QUALQUER FAMÍLIA (B09)                                        *
+ *                                                                           *
+ * IPv4 ocupa os 4 primeiros bytes (network order) e o resto fica zerado; IPv6 *
+ * usa os 16 bytes. Os bytes ficam em duas palavras de 64 bits: a igualdade   *
+ * é `family` + 2 comparações inteiras, sem memcmp no laço de busca (medido: o *
+ * memcmp custava ~60 % a mais por pacote IPv4).                             *
+ * ========================================================================= */
+typedef struct {
+    uint8_t  family;     /* AF_INET ou AF_INET6 */
+    uint64_t w[2];       /* bytes do endereço (ver acima); use memcpy para ler */
+} NtaAddr;
+
+/* Índice da partição por família: 0 = IPv4, 1 = IPv6 (ver suspects/srv_req). */
+#define FAM_IDX(f) ((f) == AF_INET6 ? 1 : 0)
+
+static NtaAddr na_v4(uint32_t be) {
+    NtaAddr a;
+    memset(&a, 0, sizeof(a));
+    a.family = AF_INET;
+    memcpy(&a.w[0], &be, 4);
+    return a;
+}
+
+static NtaAddr na_v6(const uint8_t bytes[16]) {
+    NtaAddr a;
+    a.family = AF_INET6;
+    memcpy(a.w, bytes, 16);
+    return a;
+}
+
+static inline int na_eq(const NtaAddr *x, const NtaAddr *y) {
+    return x->family == y->family && x->w[0] == y->w[0] && x->w[1] == y->w[1];
+}
+
+/* Igualdade dentro de UMA partição de família (suspects[f] / srv_req[f]): a
+ * família já é a mesma, então o laço de busca compara só as palavras. É o que
+ * mantém o custo do IPv4 perto do original (um uint32 por entrada). */
+static inline int na_eq_part(const NtaAddr *x, const NtaAddr *y) {
+    return x->w[0] == y->w[0] && x->w[1] == y->w[1];
+}
+
+/* Texto canônico (inet_ntop, sem buffer estático). `cap` >= INET6_ADDRSTRLEN. */
+static void na_text(const NtaAddr *a, char *out, size_t cap) {
+    if (!inet_ntop(a->family, a->w, out, cap)) out[0] = '\0';
+}
+
+/* ========================================================================= *
  * HOME_NET — CIDRs ignorados no IP layer (não no ARP).                      *
- * Armazenamos addr/mask em network byte order — comparação direta com      *
- * ip_header->saddr (também network byte order) sem swap.                    *
+ * IPv4 e IPv6 têm listas separadas, cada uma com MAX_HOME_CIDR: um CIDR IPv6 *
+ * nunca empurra um IPv4 para fora do limite. IPv4 guarda addr/mask em network*
+ * byte order — comparação direta com o saddr (também network order).        *
  * ========================================================================= */
 #define MAX_HOME_CIDR 8
 typedef struct { uint32_t addr_be; uint32_t mask_be; char str[20]; } HomeCidr;
 static HomeCidr g_home_cidrs[MAX_HOME_CIDR];
 static int      g_home_cidr_count = 0;
 
+typedef struct { uint8_t addr[16]; uint8_t mask[16]; char str[64]; } HomeCidr6;
+static HomeCidr6 g_home_cidrs6[MAX_HOME_CIDR];
+static int       g_home_cidr6_count = 0;
+
+/* Máscara IPv6 de `prefix` bits, byte a byte. */
+static void v6_mask(int prefix, uint8_t mask[16]) {
+    for (int i = 0; i < 16; i++) {
+        int bits = prefix - 8 * i;
+        if (bits >= 8)      mask[i] = 0xFF;
+        else if (bits <= 0) mask[i] = 0x00;
+        else                mask[i] = (uint8_t)(0xFFu << (8 - bits));
+    }
+}
+
 int analyzer_add_home_cidr(const char *cidr) {
     if (!cidr || !*cidr) return -1;
-    if (g_home_cidr_count >= MAX_HOME_CIDR) return -1;
 
     char buf[64];
     snprintf(buf, sizeof(buf), "%s", cidr);
+    int is_v6 = strchr(buf, ':') != NULL;
+    int max_prefix = is_v6 ? 128 : 32;
     char *slash = strchr(buf, '/');
-    int prefix = 32;
+    int prefix = max_prefix;
     if (slash) { *slash = '\0'; prefix = atoi(slash + 1); }
-    if (prefix < 0 || prefix > 32) return -1;
+    if (prefix < 0 || prefix > max_prefix) return -1;
+
+    if (is_v6) {
+        if (g_home_cidr6_count >= MAX_HOME_CIDR) return -1;
+        uint8_t a[16];
+        if (inet_pton(AF_INET6, buf, a) != 1) return -1;
+
+        HomeCidr6 *hc = &g_home_cidrs6[g_home_cidr6_count];
+        v6_mask(prefix, hc->mask);
+        for (int i = 0; i < 16; i++) hc->addr[i] = a[i] & hc->mask[i];
+        snprintf(hc->str, sizeof(hc->str), "%s", cidr);
+        g_home_cidr6_count++;
+        return 0;
+    }
+
+    if (g_home_cidr_count >= MAX_HOME_CIDR) return -1;
 
     struct in_addr a;
     if (inet_pton(AF_INET, buf, &a) != 1) return -1;
@@ -45,16 +123,32 @@ int analyzer_add_home_cidr(const char *cidr) {
 }
 
 void analyzer_home_dump(void) {
-    fprintf(stderr, "[ANALYZER] HOME_NET (%d):", g_home_cidr_count);
+    fprintf(stderr, "[ANALYZER] HOME_NET (%d):",
+            g_home_cidr_count + g_home_cidr6_count);
     for (int i = 0; i < g_home_cidr_count; i++) {
         fprintf(stderr, " %s", g_home_cidrs[i].str);
+    }
+    for (int i = 0; i < g_home_cidr6_count; i++) {
+        fprintf(stderr, " %s", g_home_cidrs6[i].str);
     }
     fprintf(stderr, "\n");
 }
 
-int analyzer_home_count(void) { return g_home_cidr_count; }
+int analyzer_home_count(void) { return g_home_cidr_count + g_home_cidr6_count; }
 
-static inline int is_home_ip(uint32_t src_be) {
+static int is_home_addr(const NtaAddr *a) {
+    if (a->family == AF_INET6) {
+        for (int i = 0; i < g_home_cidr6_count; i++) {
+            const HomeCidr6 *hc = &g_home_cidrs6[i];
+            int in = 1;
+            for (int k = 0; k < 16 && in; k++)
+                in = ((((const uint8_t *)a->w)[k] & hc->mask[k]) == hc->addr[k]);
+            if (in) return 1;
+        }
+        return 0;
+    }
+    uint32_t src_be;
+    memcpy(&src_be, a->w, 4);
     for (int i = 0; i < g_home_cidr_count; i++) {
         if ((src_be & g_home_cidrs[i].mask_be) == g_home_cidrs[i].addr_be) return 1;
     }
@@ -158,7 +252,7 @@ static const char *kc_stage_name[] = {
  * ========================================================================= */
 
 typedef struct {
-    uint32_t ip;
+    NtaAddr  addr;
     time_t   last_seen;
 
     /* Port Scan (v2.0) */
@@ -205,9 +299,12 @@ typedef struct {
     uint32_t ip;
 } ArpEntry;
 
-/* Estado global do IDS */
-static Suspect  suspects[MAX_SUSPECTS];
-static int      suspect_count = 0;
+/* Estado global do IDS. A tabela de suspeitos é particionada por família
+ * (índice FAM_IDX): 100 vagas para IPv4 e 100 para IPv6. Origens IPv6 são
+ * baratas de forjar (um /64 inteiro), então não podem gastar as vagas de IPv4
+ * — a regressão de exaustão (dns-exaustao) vale para as duas famílias. */
+static Suspect  suspects[2][MAX_SUSPECTS];
+static int      suspect_count[2] = {0, 0};
 static time_t   last_cleanup  = 0;
 
 static ArpEntry arp_table[MAX_ARP_ENTRIES];
@@ -221,11 +318,13 @@ static int      arp_count = 0;
  * vagas de suspeitos (MAX_SUSPECTS) e cegar o IDS para os demais IPs.       *
  * Tamanho fixo; quando enche, substitui a entrada menos recente. Zera a      *
  * contagem após INACTIVE_TIMEOUT sem consultas, como um Suspect inativo.    *
+ * Particionada por família, como suspects[] (B09): um refletor IPv6 não perde *
+ * as contagens por causa de consultas a servidores IPv4, e vice-versa.      *
  * ========================================================================= */
 #define SRV_REQ_SLOTS 64
-typedef struct { uint32_t ip; uint64_t req_bytes; time_t last_seen; } SrvReq;
-static SrvReq   srv_req[SRV_REQ_SLOTS];
-static int      srv_req_count = 0;
+typedef struct { NtaAddr addr; uint64_t req_bytes; time_t last_seen; } SrvReq;
+static SrvReq   srv_req[2][SRV_REQ_SLOTS];
+static int      srv_req_count[2] = {0, 0};
 
 /* ========================================================================= *
  * BASELINE EWMA — implementação                                             *
@@ -422,82 +521,95 @@ static void advance_kill_chain(Suspect *s, const char *attack, time_t now) {
 
 void analyzer_reset(void) {
     memset(suspects, 0, sizeof(suspects));
-    suspect_count = 0;
+    suspect_count[0] = suspect_count[1] = 0;
     last_cleanup  = 0;
     memset(arp_table, 0, sizeof(arp_table));
     arp_count = 0;
     memset(srv_req, 0, sizeof(srv_req));
-    srv_req_count = 0;
+    srv_req_count[0] = srv_req_count[1] = 0;
 }
 
 static void cleanup_suspects(time_t now) {
     if (difftime(now, last_cleanup) < CLEANUP_INTERVAL) return;
 
-    int active = 0;
-    for (int i = 0; i < suspect_count; i++) {
-        if (difftime(now, suspects[i].last_seen) < INACTIVE_TIMEOUT) {
-            suspects[active++] = suspects[i];
+    int total = 0;
+    for (int f = 0; f < 2; f++) {
+        int active = 0;
+        for (int i = 0; i < suspect_count[f]; i++) {
+            if (difftime(now, suspects[f][i].last_seen) < INACTIVE_TIMEOUT) {
+                suspects[f][active++] = suspects[f][i];
+            }
         }
+        suspect_count[f] = active;
+        total += active;
     }
 
-    suspect_count = active;
-    last_cleanup  = now;
-    printf("[IDS] Limpeza de rotina. IPs rastreados: %d\n", suspect_count);
+    last_cleanup = now;
+    printf("[IDS] Limpeza de rotina. IPs rastreados: %d\n", total);
 }
 
-static Suspect *find_or_create_suspect(uint32_t ip, time_t now) {
-    for (int i = 0; i < suspect_count; i++) {
-        if (suspects[i].ip == ip) {
-            suspects[i].last_seen = now;
-            return &suspects[i];
+static Suspect *find_or_create_suspect(const NtaAddr *a, time_t now) {
+    int f = FAM_IDX(a->family);
+    Suspect *tbl = suspects[f];
+    int     *cnt = &suspect_count[f];
+
+    for (int i = 0; i < *cnt; i++) {
+        if (na_eq_part(&tbl[i].addr, a)) {
+            tbl[i].last_seen = now;
+            return &tbl[i];
         }
     }
 
-    if (suspect_count >= MAX_SUSPECTS) return NULL;
+    if (*cnt >= MAX_SUSPECTS) return NULL;
 
-    memset(&suspects[suspect_count], 0, sizeof(Suspect));
-    suspects[suspect_count].ip                 = ip;
-    suspects[suspect_count].last_seen          = now;
-    suspects[suspect_count].brute_window_start = now;
-    suspects[suspect_count].baseline.window_start = now;
+    Suspect *s = &tbl[*cnt];
+    memset(s, 0, sizeof(Suspect));
+    s->addr                 = *a;
+    s->last_seen            = now;
+    s->brute_window_start   = now;
+    s->baseline.window_start = now;
 
-    return &suspects[suspect_count++];
+    (*cnt)++;
+    return s;
 }
 
 /** Busca um Suspect sem criar: não gasta vaga quando o IP não existe. */
-static Suspect *find_suspect(uint32_t ip) {
-    for (int i = 0; i < suspect_count; i++) {
-        if (suspects[i].ip == ip) return &suspects[i];
+static Suspect *find_suspect(const NtaAddr *a) {
+    int f = FAM_IDX(a->family);
+    for (int i = 0; i < suspect_count[f]; i++) {
+        if (na_eq_part(&suspects[f][i].addr, a)) return &suspects[f][i];
     }
     return NULL;
 }
 
 /** Requests recebidos pelo IP como servidor (0 se inativo ou ausente). */
-static uint64_t srv_req_get(uint32_t ip, time_t now) {
-    for (int i = 0; i < srv_req_count; i++) {
-        if (srv_req[i].ip == ip)
-            return difftime(now, srv_req[i].last_seen) < INACTIVE_TIMEOUT
-                   ? srv_req[i].req_bytes : 0;
+static uint64_t srv_req_get(const NtaAddr *a, time_t now) {
+    int f = FAM_IDX(a->family);
+    for (int i = 0; i < srv_req_count[f]; i++) {
+        if (na_eq_part(&srv_req[f][i].addr, a))
+            return difftime(now, srv_req[f][i].last_seen) < INACTIVE_TIMEOUT
+                   ? srv_req[f][i].req_bytes : 0;
     }
     return 0;
 }
 
-/** Soma bytes de consulta para o servidor `ip`; substitui a entrada menos recente se cheia. */
-static void srv_req_add(uint32_t ip, int bytes, time_t now) {
+/** Soma bytes de consulta para o servidor `a`; substitui a entrada menos recente se cheia. */
+static void srv_req_add(const NtaAddr *a, int bytes, time_t now) {
+    int f = FAM_IDX(a->family);
     SrvReq *e = NULL;
-    for (int i = 0; i < srv_req_count && !e; i++) {
-        if (srv_req[i].ip == ip) e = &srv_req[i];
+    for (int i = 0; i < srv_req_count[f] && !e; i++) {
+        if (na_eq_part(&srv_req[f][i].addr, a)) e = &srv_req[f][i];
     }
     if (!e) {
-        if (srv_req_count < SRV_REQ_SLOTS) {
-            e = &srv_req[srv_req_count++];
+        if (srv_req_count[f] < SRV_REQ_SLOTS) {
+            e = &srv_req[f][srv_req_count[f]++];
         } else {
-            e = &srv_req[0];
+            e = &srv_req[f][0];
             for (int i = 1; i < SRV_REQ_SLOTS; i++) {
-                if (srv_req[i].last_seen < e->last_seen) e = &srv_req[i];
+                if (srv_req[f][i].last_seen < e->last_seen) e = &srv_req[f][i];
             }
         }
-        e->ip        = ip;
+        e->addr      = *a;
         e->req_bytes = 0;
     } else if (difftime(now, e->last_seen) >= INACTIVE_TIMEOUT) {
         e->req_bytes = 0;                       /* inativo: recomeça a contagem */
@@ -687,7 +799,7 @@ static const char *detect_amplification(Suspect *s, int bytes, int is_response, 
     if (is_response) s->dns_resp_bytes += bytes;
     else             s->dns_req_bytes  += bytes;
 
-    return amplification_ratio(s->dns_req_bytes + srv_req_get(s->ip, now),
+    return amplification_ratio(s->dns_req_bytes + srv_req_get(&s->addr, now),
                                s->dns_resp_bytes);
 }
 
@@ -781,6 +893,95 @@ static const char *detect_icmp_flood(Suspect *s) {
 }
 
 /* ========================================================================= *
+ * PARSING DE CABEÇALHOS IP (B09)                                            *
+ *                                                                           *
+ * Cada função valida o tamanho contra `length` antes de cada leitura. Pacote *
+ * truncado, malformado ou com cadeia de extensão que não fecha dentro do     *
+ * quadro é descartado (retorna 0) sem ler além do buffer.                    *
+ * ========================================================================= */
+
+/* Resultado do parsing de IP: endereços, protocolo da camada superior e o
+ * trecho L4 (`l4`) com `l4_len` bytes disponíveis a partir dele. */
+typedef struct {
+    NtaAddr        src, dst;
+    uint8_t        proto;
+    const uint8_t *l4;
+    int            l4_len;
+} IpPkt;
+
+/* Limite de cabeçalhos de extensão IPv6 por pacote. Acima disso o pacote é
+ * descartado: evita cadeias longas que custam tempo sem trazer detecção. */
+#define MAX_IPV6_EXT 8
+
+static int parse_ipv4(const unsigned char *packet, int length, IpPkt *p) {
+    if (length < NTA_ETH_HLEN + (int)sizeof(nta_ipv4_hdr)) return 0;
+
+    const nta_ipv4_hdr *ip = (const nta_ipv4_hdr *)(packet + NTA_ETH_HLEN);
+    int ip_hlen = NTA_IPV4_HLEN(ip);
+    if (ip_hlen < (int)sizeof(nta_ipv4_hdr) || NTA_ETH_HLEN + ip_hlen > length)
+        return 0;
+
+    p->src   = na_v4(ip->saddr);
+    p->dst   = na_v4(ip->daddr);
+    p->proto = ip->proto;
+    p->l4    = packet + NTA_ETH_HLEN + ip_hlen;
+    p->l4_len = length - NTA_ETH_HLEN - ip_hlen;
+    return 1;
+}
+
+/* IPv6: cabeçalho fixo de 40 bytes, depois cadeia de extensões. Fragmento não
+ * inicial (offset != 0) não tem cabeçalho L4 e é descartado. ESP e "No Next
+ * Header" também são descartados: não há camada superior para analisar. */
+static int parse_ipv6(const unsigned char *packet, int length, IpPkt *p) {
+    if (length < NTA_ETH_HLEN + NTA_IPV6_HLEN) return 0;
+
+    const nta_ipv6_hdr *ip6 = (const nta_ipv6_hdr *)(packet + NTA_ETH_HLEN);
+    if ((ip6->ver_tc_flow[0] >> 4) != 6) return 0;
+
+    int     off = NTA_ETH_HLEN + NTA_IPV6_HLEN;
+    uint8_t nh  = ip6->next_hdr;
+
+    for (int n = 0; ; n++) {
+        if (nh == NTA_PROTO_HOPOPT || nh == NTA_PROTO_ROUTING ||
+            nh == NTA_PROTO_DSTOPTS) {
+            if (n >= MAX_IPV6_EXT || length - off < (int)sizeof(nta_ipv6_ext_hdr))
+                return 0;
+            const nta_ipv6_ext_hdr *e = (const nta_ipv6_ext_hdr *)(packet + off);
+            int hlen = ((int)e->hdr_ext_len + 1) * 8;
+            if (hlen > length - off) return 0;
+            nh   = e->next_hdr;
+            off += hlen;
+        } else if (nh == NTA_PROTO_AH) {
+            if (n >= MAX_IPV6_EXT || length - off < (int)sizeof(nta_ipv6_ext_hdr))
+                return 0;
+            const nta_ipv6_ext_hdr *e = (const nta_ipv6_ext_hdr *)(packet + off);
+            int hlen = ((int)e->hdr_ext_len + 2) * 4;
+            if (hlen > length - off) return 0;
+            nh   = e->next_hdr;
+            off += hlen;
+        } else if (nh == NTA_PROTO_FRAGMENT) {
+            if (n >= MAX_IPV6_EXT || length - off < (int)sizeof(nta_ipv6_frag_hdr))
+                return 0;
+            const nta_ipv6_frag_hdr *f = (const nta_ipv6_frag_hdr *)(packet + off);
+            if (ntohs(f->frag_off_m) & NTA_IPV6_FRAG_OFFSET_MASK) return 0;
+            nh   = f->next_hdr;
+            off += (int)sizeof(nta_ipv6_frag_hdr);
+        } else {
+            break;
+        }
+    }
+
+    if (nh == NTA_PROTO_ESP || nh == NTA_PROTO_NONEXT) return 0;
+
+    p->src    = na_v6(ip6->saddr);
+    p->dst    = na_v6(ip6->daddr);
+    p->proto  = nh;
+    p->l4     = packet + off;
+    p->l4_len = length - off;
+    return 1;
+}
+
+/* ========================================================================= *
  * FUNÇÃO PRINCIPAL DE ANÁLISE                                               *
  * ========================================================================= */
 
@@ -788,9 +989,10 @@ static const char *detect_icmp_flood(Suspect *s) {
  * @brief Analisa um pacote capturado e executa todas as detecções do IDS.
  *
  * Fluxo:
- *   1. Identifica EtherType (ARP ou IPv4)
- *   2. Se ARP → verifica spoofing
- *   3. Se IPv4 → busca/cria Suspect → atualiza baseline → executa detecções
+ *   1. Identifica EtherType (ARP, IPv4 ou IPv6)
+ *   2. Se ARP → verifica spoofing (só IPv4)
+ *   3. Se IPv4/IPv6 → valida cabeçalhos → busca/cria Suspect na partição da
+ *      família → atualiza baseline → executa detecções
  *   4. Se ataque detectado → avança kill chain + calcula score
  *   5. Publica telemetria com kill_chain_stage, kc_score e MITRE no JSON
  *
@@ -804,7 +1006,7 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
 
     if (length < 14) return 0;
 
-    /* EtherType: 0x0806 = ARP | 0x0800 = IPv4 */
+    /* EtherType: 0x0806 = ARP | 0x0800 = IPv4 | 0x86DD = IPv6 */
     uint16_t ether_type = (packet[12] << 8) | packet[13];
 
     if (ether_type == 0x0806) {
@@ -820,27 +1022,23 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
         return arp_attack ? 1 : 0;
     }
 
-    if (ether_type != 0x0800) return 0;
-
     /* Pacote vem da rede (potencialmente hostil): cada cabeçalho é validado
-     * contra `length` antes de ser lido. Truncado/malformado é ignorado. */
-    if (length < NTA_ETH_HLEN + (int)sizeof(nta_ipv4_hdr)) return 0;
-
-    const nta_ipv4_hdr *ip_header = (const nta_ipv4_hdr *)(packet + NTA_ETH_HLEN);
-    uint32_t            src_ip    = ip_header->saddr;
-    int                 ip_hlen   = NTA_IPV4_HLEN(ip_header);
-    if (ip_hlen < (int)sizeof(nta_ipv4_hdr) || NTA_ETH_HLEN + ip_hlen > length)
+     * contra `length` antes de ser lido (parse_ipv4 / parse_ipv6). */
+    IpPkt pkt;
+    if (ether_type == 0x0800) {
+        if (!parse_ipv4(packet, length, &pkt)) return 0;
+    } else if (ether_type == 0x86DD) {
+        if (!parse_ipv6(packet, length, &pkt)) return 0;
+    } else {
         return 0;
-    int                 l4_len    = length - NTA_ETH_HLEN - ip_hlen;
-    struct in_addr      src_addr;
-    src_addr.s_addr = src_ip;
+    }
 
     /* HOME_NET skip — promiscuous captura egress do próprio host. Sem skip,
      * DNS queries legítimas viram DNS_TUNNEL (subdomains longos de CDN),
      * e CDN respondendo de múltiplas portas vira PORT_SCAN. */
-    if (is_home_ip(src_ip)) return 0;
+    if (is_home_addr(&pkt.src)) return 0;
 
-    Suspect *s = find_or_create_suspect(src_ip, now);
+    Suspect *s = find_or_create_suspect(&pkt.src, now);
     if (!s) return 0;
 
     const char *attack = NULL;
@@ -848,12 +1046,20 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
     /* ------------------------------------------------------------------- *
      * ICMP                                                                 *
      * ------------------------------------------------------------------- */
-    if (ip_header->proto == NTA_PROTO_ICMP) {
+    /* O protocolo ICMP depende da família: em IPv4 é 1, em IPv6 é 58. Um
+     * número não vale no outro, senão um IPv4 com proto 58 viraria ICMPv6. */
+    int is_v6 = (pkt.src.family == AF_INET6);
+    if ((!is_v6 && pkt.proto == NTA_PROTO_ICMP) ||
+        ( is_v6 && pkt.proto == NTA_PROTO_ICMPV6)) {
+        if (is_v6 && pkt.l4_len < (int)sizeof(nta_icmpv6_hdr)) return 0;
+
         update_baseline(&s->baseline, 0, 0, now);
 
-        attack = detect_icmp_flood(s);
-        char src_str[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &src_addr, src_str, sizeof(src_str));
+        /* ICMPv6: o flood conta só echo request. ICMPv4 conta todo ICMP. */
+        if (!is_v6 || ((const nta_icmpv6_hdr *)pkt.l4)->type == NTA_ICMPV6_ECHO_REQUEST)
+            attack = detect_icmp_flood(s);
+        char src_str[INET6_ADDRSTRLEN];
+        na_text(&pkt.src, src_str, sizeof(src_str));
         if (attack) {
             advance_kill_chain(s, attack, now);
             collector_record(attack, src_str, now);
@@ -869,9 +1075,9 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
     /* ------------------------------------------------------------------- *
      * TCP: Stealth Scan, SYN Flood, Brute Force, Port Scan                *
      * ------------------------------------------------------------------- */
-    if (ip_header->proto == NTA_PROTO_TCP) {
-        if (l4_len < (int)sizeof(nta_tcp_hdr)) return 0;
-        const nta_tcp_hdr *tcp  = (const nta_tcp_hdr *)(packet + NTA_ETH_HLEN + ip_hlen);
+    if (pkt.proto == NTA_PROTO_TCP) {
+        if (pkt.l4_len < (int)sizeof(nta_tcp_hdr)) return 0;
+        const nta_tcp_hdr *tcp  = (const nta_tcp_hdr *)pkt.l4;
         uint16_t       dst_port = ntohs(tcp->dport);
         uint8_t        flags    = tcp->flags;
 
@@ -887,8 +1093,8 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
         if (!attack) attack = detect_brute_force(s, flags, dst_port, now);
         if (!attack) attack = detect_port_scan(s, dst_port);
 
-        char src_str[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &src_addr, src_str, sizeof(src_str));
+        char src_str[INET6_ADDRSTRLEN];
+        na_text(&pkt.src, src_str, sizeof(src_str));
         if (attack) {
             advance_kill_chain(s, attack, now);
             collector_record(attack, src_str, now);
@@ -904,23 +1110,23 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
     /* ------------------------------------------------------------------- *
      * UDP: DNS Tunneling, DDoS Amplification                              *
      * ------------------------------------------------------------------- */
-    if (ip_header->proto == NTA_PROTO_UDP) {
-        if (l4_len < (int)sizeof(nta_udp_hdr)) return 0;
-        const nta_udp_hdr *udp  = (const nta_udp_hdr *)(packet + NTA_ETH_HLEN + ip_hlen);
+    if (pkt.proto == NTA_PROTO_UDP) {
+        if (pkt.l4_len < (int)sizeof(nta_udp_hdr)) return 0;
+        const nta_udp_hdr *udp  = (const nta_udp_hdr *)pkt.l4;
         uint16_t       src_port = ntohs(udp->sport);
         uint16_t       dst_port = ntohs(udp->dport);
         int            is_dns   = (src_port == 53 || dst_port == 53);
 
         /* Por padrão o alerta sai pela origem. Uma consulta pode disparar
          * AMPLIFICATION no servidor (destino): aí o alerta usa o IP dele. */
-        Suspect       *report      = s;
-        struct in_addr report_addr = src_addr;
+        Suspect *report      = s;
+        NtaAddr  report_addr = pkt.src;
 
         update_baseline(&s->baseline, 0, is_dns, now);
 
         if (is_dns) {
-            const unsigned char *dns_payload = packet + 14 + ip_hlen + 8;
-            int dns_len = length - 14 - ip_hlen - 8;
+            const unsigned char *dns_payload = pkt.l4 + 8;
+            int dns_len = pkt.l4_len - 8;
 
             /* Header DNS tem 12 bytes (flags no byte 2); menor não é DNS. */
             if (dns_len >= 12) {
@@ -935,30 +1141,30 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
                  * tabela srv_req, sem criar Suspect (cada destino gastaria uma vaga
                  * de suspects[]). Se o servidor já tem respostas acumuladas e o
                  * ratio estoura agora, o alerta é dele: aí obtém o Suspect dele. */
-                if (!is_response && dst_port == 53 && ip_header->daddr != src_ip &&
-                    !is_home_ip(ip_header->daddr)) {
-                    srv_req_add(ip_header->daddr, length, now);
+                if (!is_response && dst_port == 53 && !na_eq(&pkt.dst, &pkt.src) &&
+                    !is_home_addr(&pkt.dst)) {
+                    srv_req_add(&pkt.dst, length, now);
 
-                    Suspect *srv = attack ? NULL : find_suspect(ip_header->daddr);
+                    Suspect *srv = attack ? NULL : find_suspect(&pkt.dst);
                     const char *srv_attack = srv
                         ? amplification_ratio(srv->dns_req_bytes +
-                                              srv_req_get(ip_header->daddr, now),
+                                              srv_req_get(&pkt.dst, now),
                                               srv->dns_resp_bytes)
                         : NULL;
                     if (srv_attack) {
-                        Suspect *alvo = find_or_create_suspect(ip_header->daddr, now);
+                        Suspect *alvo = find_or_create_suspect(&pkt.dst, now);
                         if (alvo) {
-                            attack             = srv_attack;
-                            report             = alvo;
-                            report_addr.s_addr = ip_header->daddr;
+                            attack      = srv_attack;
+                            report      = alvo;
+                            report_addr = pkt.dst;
                         }
                     }
                 }
             }
         }
 
-        char report_str[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &report_addr, report_str, sizeof(report_str));
+        char report_str[INET6_ADDRSTRLEN];
+        na_text(&report_addr, report_str, sizeof(report_str));
         if (attack) {
             advance_kill_chain(report, attack, now);
             collector_record(attack, report_str, now);
