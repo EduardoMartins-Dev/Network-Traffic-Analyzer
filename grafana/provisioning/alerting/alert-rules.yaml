@@ -9,6 +9,9 @@ groups:
     folder: NTA Alerts
     interval: 1m
     rules:
+      # Uma instancia por src_ip e attack_type. Com count() sem _time, o Grafana 13.1.2
+      # colapsa as series num unico frame (so o primeiro IP sobrevive) e a regra nao dispara;
+      # aggregateWindow entrega uma serie por grupo, com os rotulos (B30).
       - uid: nta-attack-detected
         title: Ataque detectado
         condition: THRESHOLD
@@ -25,7 +28,7 @@ groups:
                   |> range(start: -5m)
                   |> filter(fn: (r) => r._measurement == "traffic" and r._field == "is_scan" and r._value == 1.0)
                   |> group(columns: ["src_ip", "attack_type"])
-                  |> count()
+                  |> aggregateWindow(every: 1m, fn: count, createEmpty: false)
           - refId: REDUCE
             datasourceUid: __expr__
             model:
@@ -58,7 +61,7 @@ groups:
         for: 1m
         annotations:
           summary: Um ou mais ataques foram detectados nos últimos 5 minutos.
-          description: O IDS classificou ao menos 1 evento como ataque (is_scan=1).
+          description: "O IDS classificou ataque ({{ $labels.attack_type }}) vindo do IP {{ $labels.src_ip }} (is_scan=1)."
         labels:
           severity: warning
           nta_canais: "${NTA_ALERT_CANAIS}"
@@ -178,6 +181,8 @@ groups:
       # Um agente parado some do resultado do Flux; por isso a consulta olha as últimas
       # 24 h, e o alerta resolve sozinho se o agente ficar mais de 24 h sem enviar.
       # noDataState OK: sem nenhum agente nas últimas 24 h (stack nova) não há o que alertar.
+      # Filtra o campo events_per_sec (sempre enviado pelo agente) antes do max: com campos
+      # de tipos diferentes no mesmo grupo, o Flux falha com "schema collision" (B30).
       - uid: nta-host-offline
         title: Agente sem enviar métricas (host offline)
         condition: THRESHOLD
@@ -192,7 +197,7 @@ groups:
               query: |
                 from(bucket: "network_traffic")
                   |> range(start: -24h)
-                  |> filter(fn: (r) => r._measurement == "pipeline_metrics")
+                  |> filter(fn: (r) => r._measurement == "pipeline_metrics" and r._field == "events_per_sec")
                   |> group(columns: ["agent_id"])
                   |> max(column: "_time")
                   |> map(fn: (r) => ({r with _value: float(v: int(v: now()) - int(v: r._time)) / 1000000000.0}))
