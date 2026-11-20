@@ -243,6 +243,20 @@ static void test_dns_normal_nao_dispara(void) {
     CHECK(detections("AMPLIFICATION", cli) == 0);
 }
 
+/* Regressão: consultas para 110 servidores distintos não podem consumir as 100
+ * vagas de suspeitos. Se consumirem, o port scan que vem depois é ignorado. */
+static void test_exaustao_dns_nao_cega_port_scan(void) {
+    fresh();
+    const char *cli = "198.51.100.20", *scan = "192.168.1.100";
+    char srv[16];
+    for (int i = 0; i < 110; i++) {
+        snprintf(srv, sizeof(srv), "203.0.113.%d", i + 1);
+        udp_dns(cli, srv, 0, 29, T0 + i);
+    }
+    for (int p = 0; p < 30; p++) tcp(scan, (uint16_t)(1000 + p), NTA_TH_SYN, T0 + 110 + p);
+    CHECK(detections("PORT_SCAN", scan) >= 1);
+}
+
 static void test_home_net(void) {
     CHECK(analyzer_add_home_cidr("300.1.1.1/8") == -1);
     CHECK(analyzer_add_home_cidr("10.0.0.0/33") == -1);
@@ -274,6 +288,7 @@ int main(void) {
     RUN(test_pacotes_malformados);
     RUN(test_refletor_puro_dispara);
     RUN(test_dns_normal_nao_dispara);
+    RUN(test_exaustao_dns_nao_cega_port_scan);
     RUN(test_home_net);            /* por último: HOME_NET não é zerado pelo reset */
     TEST_EXIT();
 }

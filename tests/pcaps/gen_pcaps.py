@@ -153,6 +153,14 @@ def main() -> None:
         normal.append(udp(53, 40000 + i, dns_msg(i, 0x8180, "www.example.com", b"x" * 40), REFLECTOR, CLIENT))
     write_pcap("dns-normal.pcap", normal, 0.2)
 
+    # Exaustão da tabela de suspeitos (regressão de B28): um cliente consulta 110
+    # servidores distintos (mais que MAX_SUSPECTS=100) e depois 192.168.1.100 faz
+    # port scan. O scan não pode ser ignorado por falta de vaga: gabarito PORT_SCAN.
+    exh = [udp(40000 + i, 53, dns_msg(i, 0x0100, "www.example.com"), CLIENT,
+               bytes([203, 0, 113, i + 1])) for i in range(110)]
+    exh += [tcp(40000, 1000 + i, TCP_SYN) for i in range(30)]
+    write_pcap("dns-exaustao.pcap", exh, 0.05)
+
     # Malformados: nenhum pode gerar leitura fora do buffer nem detecção
     # (gabarito vazio; roda sob ASan/UBSan no CI).
     null = tcp(40000, 80, 0)                                 # null scan = 54 bytes
