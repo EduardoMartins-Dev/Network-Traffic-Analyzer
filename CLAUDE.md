@@ -28,7 +28,7 @@ nta-server → narrator_queue → Groq (LLM) → incident_narrative
 
 **Pipeline do agente (4 threads):** `capture_th` → `rb_pkt` → `analysis_th` → `rb_evt` → `publish_th` (+ `metrics_th`). Filas SPSC lock-free com atômicos C11; publicação em lote (`AGENT_BATCH_SIZE`, `AGENT_BATCH_TIMEOUT_MS`).
 
-**Detecções (10):** Port Scan, ICMP Flood, SYN Flood, Null Scan, Xmas Scan, SYN/FIN Scan, Brute Force (22/21/3389), DNS Tunneling, ARP Spoofing, DDoS Amplification. Kill chain: `IDLE → RECON → EXPLOIT → EXFIL → COMPLETE`, janela de 30 min, score 0–100; o narrator dispara com `kc_score >= 80` ou `abuse_score >= 75`.
+**Detecções (10):** Port Scan, ICMP Flood, SYN Flood, Null Scan, Xmas Scan, SYN/FIN Scan, Brute Force (22/21/3389), DNS Tunneling, ARP Spoofing, DDoS Amplification. O agente analisa IPv4 (EtherType `0x0800`) e IPv6 (`0x86DD`, com até 8 cabeçalhos de extensão). Sobre IPv6 valem Port Scan, SYN Flood, Null/Xmas/SYN-FIN Scan, Brute Force, DNS Tunneling, ICMP Flood (ICMPv6 echo request) e DDoS Amplification; ARP Spoofing fica só em IPv4 e NDP spoof está fora do escopo. Kill chain: `IDLE → RECON → EXPLOIT → EXFIL → COMPLETE`, janela de 30 min, score 0–100; o narrator dispara com `kc_score >= 80` ou `abuse_score >= 75`.
 
 ## Especificações técnicas
 
@@ -52,7 +52,7 @@ Plataformas do agente: Linux, FreeBSD, macOS e Windows nativo (serviço `NTAAgen
 ```
 include/agent|server/   headers          src/agent/{analysis,capture,core,output,platform,replay}
 src/server/             um .c por módulo  third_party/cjson   cJSON vendored
-tests/unit/             ctest             tests/pcaps/        14 pcaps sintéticos (12 com gabarito)
+tests/unit/             ctest             tests/pcaps/        26 pcaps sintéticos (22 com gabarito de detecção; 4 sem alerta)
 tests/fuzz/             libFuzzer         tests/bench/        benchmark de pps (opcional)
 deploy/ scripts/ grafana/ installer/ .github/workflows/        infra, automação, dashboards, CI
 ```
@@ -95,10 +95,14 @@ Configuração do agente: variáveis `AGENT_*` ou `--config <arquivo>` (o ambien
 
 ## Estado e pendências conhecidas
 
-- Entregue até a **v8.1** (agente nativo no Windows, servidor em Docker, reconexão AMQP). Depois da `v8.1.1` já estão em `main`, sem tag: o agente com o Npcap padrão, sem o modo WinPcap-compatível (PR #13), o reload do IoC por SIGHUP, canais extras de alerta e os pcaps de cobertura (PRs #14 a #18).
+- Entregue até a **v8.1** (agente nativo no Windows, servidor em Docker, reconexão AMQP). Depois da `v8.1.1` já estão em `main`, sem tag: o agente com o Npcap padrão, sem o modo WinPcap-compatível (PR #13), o reload do IoC por SIGHUP, canais extras de alerta, os pcaps de cobertura, o suporte a IPv6 no agente (B09) e os demais PRs até o #31 (PRs #14 a #31).
 - Planejado: v9.0 (AF_PACKET/TPACKET_V3, zero-copy) e v10.0 (VPS, Terraform, Nginx, Let's Encrypt, cluster RabbitMQ).
 - `AMPLIFICATION` detecta um refletor DNS que só envia respostas quando o sensor vê a consulta forjada com origem fora de `HOME_NET` (o request é contado no IP de destino, numa tabela fixa de 64 servidores). Não detecta quando a vítima está em `HOME_NET` (gateway da vítima): o skip descarta a consulta. Com a mistura de consultas DNSSEC/ANY, um resolvedor pode disparar com algo entre 60 % e 70 % de consultas com resposta de ~1 KB (medido com pcap sintético: 60 % deu ratio acumulado 9,8, sem alerta; 70 % deu 11,2, com alerta; o limiar 10:1 é cruzado perto de 61 % por interpolação linear).
 - **Resolvido (B29, PR #28):** o `analyzer.c` usava `inet_ntoa`, que no Windows só funciona com o Winsock já inicializado. Agora usa `inet_ntop` com buffers locais `INET_ADDRSTRLEN` em ARP, ICMP, TCP, UDP e `report_addr` (`src/agent/analysis/analyzer.c`). Medido pelo orquestrador no Windows (Ryzen 7 7700X, MSYS2 UCRT64, Release): com `bench_pps` a 20 mil pps oferecidos o `rb_pkt` tinha 80,08 % de overflow, e a 200 mil pps, 96,05 %; depois da mudança, 0 % nos dois. A causa era `inet_ntoa` sem `WSAStartup` (~238 µs por chamada, micro-teste do agente do B29). O replay e o benchmark não abrem AMQP. O agente real com AMQP não tinha esse custo em regime: o rabbitmq-c chama `WSAStartup` ao abrir o socket (sonda do B29, ~0,01 a 0,3 µs), mas a proteção dependia desse efeito colateral.
+- **Pendências do IPv6 (B09, PR #31):**
+  - Mais de 100 origens IPv6 distintas ativas ao mesmo tempo esgotam as vagas da família (`MAX_SUSPECTS` = 100, igual ao IPv4). Uma origem sem vaga fica sem nenhuma detecção IPv6 (não só do mesmo tipo): `find_or_create_suspect` devolve NULL e `analyze_packet` retorna 0. Decisão em aberto: agregar por /64, despejar por LRU ou ADR.
+  - Não verificado em captura ao vivo com IPv6 real (nem auto-detecção de HOME_NET, publicação AMQP ou enriquecimento GeoIP/IoC com IPv6). A validação foi com pcaps sintéticos e replay.
+  - O servidor trata IPv6 privado como público: `is_private_ip` (em `nta_abuse.c`, `nta_geoip.c` e `nta_whois.c`) só reconhece prefixos IPv4, então `::1`, `fe80::/10` e `fc00::/7` iriam ao AbuseIPDB e ao WHOIS. A correção está em andamento no B33 (outro agente, branch `fix/server-ipv6-private`) e ainda não está em `main`.
 - O `ROADMAP.MD` e o `README.md` foram alinhados ao código em 2026-11 (PR #16), mas podem restar divergências: em caso de dúvida, **o código vale**.
 
 ## Documentação detalhada
