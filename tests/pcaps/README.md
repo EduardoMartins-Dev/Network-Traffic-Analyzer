@@ -32,6 +32,18 @@ Cada arquivo `.pcap` deve ter um gabarito `.json` com o mesmo nome:
 | amplification-reflector.pcap | amplification-reflector.json | AMPLIFICATION | 203.0.113.53 |
 | dns-exaustao.pcap  | dns-exaustao.json   | PORT_SCAN      | 192.168.1.100      |
 | dns-normal.pcap    | dns-normal.json     | (nenhum)       | vazio: 0 alertas   |
+| ipv6-syn-flood.pcap | ipv6-syn-flood.json | SYN_FLOOD     | 2001:db8:a::100    |
+| ipv6-port-scan.pcap | ipv6-port-scan.json | PORT_SCAN     | 2001:db8:a::100    |
+| ipv6-null-scan.pcap | ipv6-null-scan.json | NULL_SCAN     | 2001:db8:a::100    |
+| ipv6-xmas-scan.pcap | ipv6-xmas-scan.json | XMAS_SCAN     | 2001:db8:a::100    |
+| ipv6-synfin-scan.pcap | ipv6-synfin-scan.json | SYNFIN_SCAN | 2001:db8:a::100  |
+| ipv6-brute-force.pcap | ipv6-brute-force.json | BRUTE_FORCE | 2001:db8:a::100    |
+| ipv6-icmp-flood.pcap | ipv6-icmp-flood.json | ICMP_FLOOD   | 2001:db8:a::100    |
+| ipv6-dns-tunnel.pcap | ipv6-dns-tunnel.json | DNS_TUNNEL   | 2001:db8:a::100    |
+| ipv6-amplification-reflector.pcap | ipv6-amplification-reflector.json | AMPLIFICATION | 2001:db8:3::53 |
+| ipv6-exaustao.pcap | ipv6-exaustao.json  | PORT_SCAN      | 192.168.1.100 (IPv4) |
+| ipv6-benign.pcap   | ipv6-benign.json    | (nenhum)       | vazio: 0 alertas   |
+| ipv6-malformed.pcap | ipv6-malformed.json | (nenhum)      | vazio: 0 alertas   |
 
 Notas sobre os gabaritos novos:
 - **ARP_SPOOF**: o `src_ip` é o IP **reivindicado** na resposta ARP divergente
@@ -49,6 +61,14 @@ Notas sobre os gabaritos novos:
   servidores distintos (mais que as 100 vagas de suspeitos) e depois
   `192.168.1.100` faz port scan. O scan tem que continuar detectado: as
   consultas não podem consumir as vagas de `suspects[]`.
+- **IPv6 (B09)**: os `ipv6-*.pcap` repetem os volumes dos pcaps IPv4 de cada
+  detector. Endereços são de documentação (RFC 3849) e o gabarito usa o texto
+  canônico (`inet_ntop`). O `ipv6-exaustao.pcap` mede a regressão com origens
+  IPv6: 110 origens com um SYN cada, e depois um port scan IPv4. Sem gabarito:
+  `ipv6-benign.pcap` (tráfego normal) e `ipv6-malformed.pcap` (cabeçalhos
+  truncados, cadeia de 9 extensões, fragmento não inicial e ESP, que não podem
+  gerar alerta). Checksums de L4 são calculados, mas o analyzer não os verifica.
+  ARP e NDP sobre IPv6 não têm pcap: NDP spoof está fora do escopo.
 - **Sem gabarito** (`dns-normal.pcap`): DNS proporcional (consulta de 71 B,
   resposta de 128 B, ~1,7x). Não pode gerar nenhum alerta. O replay não
   reprova detecção extra quando o gabarito é vazio, então a prova é a linha

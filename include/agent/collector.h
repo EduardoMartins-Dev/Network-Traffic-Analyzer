@@ -14,7 +14,7 @@
 
 typedef struct {
     char   attack_type[32];  /* ex: "SYN_FLOOD"     */
-    char   src_ip[16];       /* ex: "192.168.1.10"  */
+    char   src_ip[46];       /* ex: "192.168.1.10" ou "2001:db8::10" (INET6_ADDRSTRLEN) */
     time_t timestamp;        /* timestamp do pacote  */
 } DetectedEvent;
 

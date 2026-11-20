@@ -14,7 +14,7 @@
 
 typedef struct {
     char attack_type[32];  /* ex: "SYN_FLOOD"   */
-    char src_ip[16];       /* ex: "192.168.1.1" */
+    char src_ip[46];       /* ex: "192.168.1.1" ou "2001:db8::1" (INET6_ADDRSTRLEN) */
     int  has_time_window;
     long t_start_sec;      /* segundos relativos ao primeiro pacote         */
     long t_end_sec;

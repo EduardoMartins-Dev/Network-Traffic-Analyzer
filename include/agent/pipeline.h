@@ -33,7 +33,7 @@ typedef struct {
 
 /* Slot de evento parseado pelo analyzer, pronto para serialização JSON.   */
 typedef struct {
-    char src_ip[16];
+    char src_ip[46];      /* INET6_ADDRSTRLEN: texto de IPv4 ou IPv6 */
     int  port;
     char proto[8];
     int  bytes;
