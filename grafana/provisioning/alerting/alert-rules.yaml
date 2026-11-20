@@ -61,6 +61,7 @@ groups:
           description: O IDS classificou ao menos 1 evento como ataque (is_scan=1).
         labels:
           severity: warning
+          nta_canais: "${NTA_ALERT_CANAIS}"
 
       - uid: nta-killchain-critical
         title: Kill chain crítica (score ≥ 85)
@@ -114,6 +115,7 @@ groups:
           description: O correlator avançou um IP para estágio avançado — possível exploit/exfil em andamento.
         labels:
           severity: critical
+          nta_canais: "${NTA_ALERT_CANAIS}"
 
       - uid: nta-pipeline-overflow
         title: Pipeline — overflow do ring buffer
@@ -169,3 +171,4 @@ groups:
           description: Aumente AGENT_BUFFER_SIZE ou investigue gargalo na thread de análise/publicação.
         labels:
           severity: warning
+          nta_canais: "${NTA_ALERT_CANAIS}"

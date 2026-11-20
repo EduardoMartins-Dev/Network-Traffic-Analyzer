@@ -1,4 +1,17 @@
-# Roteamento: todo alerta cai no Telegram (única política por enquanto).
+# Roteamento de alertas.
+#
+# Política (ver também .env.example):
+#   - Telegram (telegram-nta) recebe todo alerta — comportamento de sempre.
+#   - Slack, Discord e ntfy são opcionais. Cada alerta carrega o label
+#     nta_canais, preenchido com a variável NTA_ALERT_CANAIS (ex.: "slack,ntfy").
+#     Um canal recebe o alerta só se o nome dele estiver nessa lista.
+#     NTA_ALERT_CANAIS vazio = só Telegram.
+#   - A escolha vale para todas as regras do grupo nta-ids. Para separar por
+#     alerta, troque o valor do label nta_canais em alert-rules.yaml.
+#
+# Por que o Telegram aparece como filho: no Alertmanager, se algum filho casa,
+# o receiver do pai deixa de ser usado. Por isso o filho do Telegram casa tudo.
+#
 # Docs: https://grafana.com/docs/grafana/latest/alerting/fundamentals/notification-policies/
 apiVersion: 1
 
@@ -11,3 +24,18 @@ policies:
     group_wait: 10s
     group_interval: 1m
     repeat_interval: 30m
+    routes:
+      - receiver: telegram-nta
+        continue: true
+      - receiver: slack-nta
+        object_matchers:
+          - ["nta_canais", "=~", ".*slack.*"]
+        continue: true
+      - receiver: discord-nta
+        object_matchers:
+          - ["nta_canais", "=~", ".*discord.*"]
+        continue: true
+      - receiver: ntfy-nta
+        object_matchers:
+          - ["nta_canais", "=~", ".*ntfy.*"]
+        continue: true

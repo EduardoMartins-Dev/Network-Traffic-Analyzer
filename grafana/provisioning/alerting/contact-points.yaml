@@ -1,5 +1,8 @@
 # Contact points: onde os alertas do Grafana são entregues.
 # Token e chat_id vêm do ambiente (docker-compose .env).
+# Slack, Discord e ntfy são opcionais: o docker-compose põe placeholders quando
+# a variável está vazia, e o canal só recebe alertas se NTA_ALERT_CANAIS o listar
+# (ver notification-policies.yaml). Sem isso, nenhum envio é tentado.
 # Docs: https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/file-provisioning/
 apiVersion: 1
 
@@ -20,3 +23,33 @@ contactPoints:
 
             {{ range .Alerts }}<pre>{{ .ValueString }}</pre>
             {{ end }}
+
+  - orgId: 1
+    name: slack-nta
+    receivers:
+      - uid: slack-nta-receiver
+        type: slack
+        settings:
+          url: ${SLACK_WEBHOOK_URL}
+
+  - orgId: 1
+    name: discord-nta
+    receivers:
+      - uid: discord-nta-receiver
+        type: discord
+        settings:
+          url: ${DISCORD_WEBHOOK_URL}
+
+  # ntfy não é tipo nativo no Grafana 13.1.2 (o provisioning recusa "ntfy").
+  # Entrega via webhook HTTP para a URL completa do tópico (ex.: https://ntfy.sh/nta-alertas).
+  # O corpo é o JSON do Grafana, não texto formatado.
+  - orgId: 1
+    name: ntfy-nta
+    receivers:
+      - uid: ntfy-nta-receiver
+        type: webhook
+        settings:
+          url: ${NTFY_URL}
+          httpMethod: POST
+          authorization_scheme: Bearer
+          authorization_credentials: ${NTFY_ACCESS_TOKEN}
