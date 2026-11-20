@@ -2,7 +2,7 @@
 #define NTA_NETIF_H
 
 /* ========================================================================= *
- * Descoberta das redes IPv4 locais de uma interface (HOME_NET auto-detect). *
+ * Descoberta das redes IPv4 e IPv6 locais de uma interface (HOME_NET).      *
  *                                                                           *
  * Implementações por plataforma:                                            *
  *   src/agent/platform/netif_posix.c — getifaddrs() (Linux, FreeBSD, macOS)       *
