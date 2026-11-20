@@ -3,7 +3,8 @@
 
 Cada arquivo exercita um detector do analyzer.c com volume acima do limiar
 de calibração (SYN_FLOOD_THRESHOLD, SCAN_THRESHOLD, ...). Atacante sempre
-192.168.1.100 — o mesmo src_ip dos gabaritos .json ao lado.
+192.168.1.100 — o mesmo src_ip dos gabaritos .json ao lado. Exceção: ARP_SPOOF
+publica o IP reivindicado na resposta ARP (192.168.1.1), não o IP do atacante.
 
 Uso:  python3 tests/pcaps/gen_pcaps.py   (sobrescreve os .pcap deste diretório)
 """
@@ -14,9 +15,13 @@ from pathlib import Path
 OUT_DIR = Path(__file__).resolve().parent
 ATTACKER = bytes([192, 168, 1, 100])
 VICTIM = bytes([192, 168, 1, 10])
+GATEWAY = bytes([192, 168, 1, 1])
+RESOLVER = bytes([8, 8, 8, 8])
+ATTACKER_MAC = bytes([0x02, 0x42, 0xAC, 0x11, 0x00, 0x64])
+BROADCAST_MAC = b"\xff" * 6
 BASE_TS = 1700000000  # timestamp fixo -> pcaps idênticos a cada geração
 
-TCP_FIN, TCP_SYN = 0x01, 0x02
+TCP_FIN, TCP_SYN, TCP_PSH, TCP_URG = 0x01, 0x02, 0x08, 0x20
 
 
 def checksum(data: bytes) -> int:
@@ -28,9 +33,9 @@ def checksum(data: bytes) -> int:
     return ~s & 0xFFFF
 
 
-def ipv4(proto: int, payload: bytes) -> bytes:
+def ipv4(proto: int, payload: bytes, src: bytes = ATTACKER, dst: bytes = VICTIM) -> bytes:
     hdr = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20 + len(payload), 0, 0,
-                      64, proto, 0, ATTACKER, VICTIM)
+                      64, proto, 0, src, dst)
     hdr = hdr[:10] + struct.pack("!H", checksum(hdr)) + hdr[12:]
     eth = b"\x00\x11\x22\x33\x44\x55" + b"\x66\x77\x88\x99\xaa\xbb" + b"\x08\x00"
     return eth + hdr + payload
@@ -51,6 +56,30 @@ def dns_query(sport: int, qid: int, name: str) -> bytes:
     qname = b"".join(bytes([len(l)]) + l.encode() for l in name.split(".")) + b"\0"
     dns = struct.pack("!HHHHHH", qid, 0x0100, 1, 0, 0, 0) + qname + struct.pack("!HH", 1, 1)
     return ipv4(17, struct.pack("!HHHH", sport, 53, 8 + len(dns), 0) + dns)
+
+
+def dns_msg(qid: int, flags: int, name: str, answer: bytes = None) -> bytes:
+    """Mensagem DNS com 1 pergunta A e, opcionalmente, 1 resposta TXT."""
+    qname = b"".join(bytes([len(l)]) + l.encode() for l in name.split(".")) + b"\0"
+    msg = struct.pack("!HHHHHH", qid, flags, 1, 0 if answer is None else 1, 0, 0)
+    msg += qname + struct.pack("!HH", 1, 1)
+    if answer is not None:
+        rdata = bytes([len(answer)]) + answer
+        msg += struct.pack("!HHHIH", 0xC00C, 16, 1, 300, len(rdata)) + rdata
+    return msg
+
+
+def udp(sport: int, dport: int, payload: bytes, src: bytes, dst: bytes) -> bytes:
+    return ipv4(17, struct.pack("!HHHH", sport, dport, 8 + len(payload), 0) + payload,
+                src, dst)
+
+
+def arp_reply(sender_mac: bytes, sender_ip: bytes, target_ip: bytes) -> bytes:
+    """ARP reply (op=2) em quadro Ethernet de 42 bytes."""
+    arp = struct.pack("!HHBBH", 1, 0x0800, 6, 4, 2) + sender_mac + sender_ip
+    arp += b"\0" * 6 + target_ip
+    eth = BROADCAST_MAC + sender_mac + b"\x08\x06"
+    return eth + arp
 
 
 def write_pcap(name: str, packets, interval: float) -> None:
@@ -77,6 +106,31 @@ def main() -> None:
                [dns_query(50000 + i, i, hashlib.sha256(str(i).encode()).hexdigest()[:60]
                           + ".exfil.example")
                 for i in range(20)], 0.2)
+
+    # XMAS (FIN+PSH+URG): XMAS_SCAN dispara no 3o pacote (STEALTH_THRESHOLD=3).
+    write_pcap("xmas-scan.pcap",
+               [tcp(40000, 1000 + i, TCP_FIN | TCP_PSH | TCP_URG) for i in range(20)], 0.05)
+    # SYN+FIN: combinação inválida pelo RFC; SYNFIN_SCAN dispara no 3o pacote.
+    write_pcap("synfin-scan.pcap",
+               [tcp(40000, 1000 + i, TCP_SYN | TCP_FIN) for i in range(20)], 0.05)
+
+    # ARP spoofing: o MAC do atacante anuncia 192.168.1.100 e depois passa a
+    # responder por 192.168.1.1 (gateway). O analyzer publica o IP reivindicado
+    # (192.168.1.1), sem checar HOME_NET. Cada resposta divergente gera alerta.
+    arp = [arp_reply(ATTACKER_MAC, ATTACKER, VICTIM)]
+    arp += [arp_reply(ATTACKER_MAC, GATEWAY, VICTIM) for _ in range(5)]
+    write_pcap("arp-spoof.pcap", arp, 0.5)
+
+    # Amplificação por refletor: 192.168.1.100 faz 3 consultas próprias pequenas
+    # (~71 B cada, 213 B no total; o analyzer só conta bytes DNS a partir de 100 B)
+    # e responde 10 vezes à vítima com TXT de 200 B (284 B cada, 2840 B no total,
+    # 13x > AMPLIFICATION_RATIO=10). Contabilidade é por IP de origem, então o
+    # refletor precisa também emitir requests para o denominador ser não nulo.
+    amp = [udp(40000 + i, 53, dns_msg(i, 0x0100, "example.com"), ATTACKER, RESOLVER)
+           for i in range(3)]
+    amp += [udp(53, 40000 + i, dns_msg(i, 0x8180, "example.com", b"A" * 200), ATTACKER, VICTIM)
+            for i in range(10)]
+    write_pcap("amplification.pcap", amp, 0.1)
 
     # Malformados: nenhum pode gerar leitura fora do buffer nem detecção
     # (gabarito vazio; roda sob ASan/UBSan no CI).
