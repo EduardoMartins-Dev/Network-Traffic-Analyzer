@@ -291,7 +291,7 @@ jobs:
           cpu_count: 2
 
       - name: Install dependencies (pkg)
-        run: pkg install -y cmake libpcap rabbitmq-c
+        run: sudo pkg install -y cmake libpcap rabbitmq-c
 
       - name: Configure CMake
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNTA_BUILD_SERVER=OFF
