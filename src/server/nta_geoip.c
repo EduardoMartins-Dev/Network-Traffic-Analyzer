@@ -14,6 +14,7 @@
  * ========================================================================= */
 
 #include "nta_geoip.h"
+#include "nta_ipclass.h"
 
 #include <maxminddb.h>
 #include <pthread.h>
@@ -40,7 +41,7 @@ struct NtaGeo {
 };
 
 /* -------------------------------------------------------------------------- *
- * Hash + IP privado                                                          *
+ * Hash                                                                       *
  * -------------------------------------------------------------------------- */
 
 /* FNV-1a 32-bit — boa distribuição pra strings curtas. */
@@ -51,19 +52,6 @@ static unsigned hash_ip(const char *s) {
         h *= 16777619u;
     }
     return h;
-}
-
-/* Mantém EXATAMENTE a lista do data_ingestor.py:
- *   ip.startswith(("127.", "192.168.", "10.", "172."))
- * Sim, "172." pega 172.32+ que tecnicamente é público — mantemos pra
- * paridade de schema com Python. */
-static int is_private_ip(const char *ip) {
-    if (!ip || !*ip) return 1;
-    if (strncmp(ip, "127.",     4) == 0) return 1;
-    if (strncmp(ip, "192.168.", 8) == 0) return 1;
-    if (strncmp(ip, "10.",      3) == 0) return 1;
-    if (strncmp(ip, "172.",     4) == 0) return 1;
-    return 0;
 }
 
 /* -------------------------------------------------------------------------- *
@@ -185,7 +173,7 @@ static void lookup_asn(NtaGeo *g, const char *ip, NtaGeoResult *out) {
 int nta_geo_lookup(NtaGeo *g, const char *ip, NtaGeoResult *out) {
     if (!g || !out)          return 0;
     memset(out, 0, sizeof(*out));
-    if (is_private_ip(ip))   return 0;
+    if (nta_ip_is_private(ip)) return 0;
 
     if (cache_get(g, ip, out)) return (out->has_geo || out->has_asn) ? 1 : 0;
 

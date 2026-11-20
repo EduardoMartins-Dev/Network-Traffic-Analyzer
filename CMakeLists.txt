@@ -174,6 +174,14 @@ if(NTA_BUILD_TESTS)
         target_link_libraries(test_ioc PRIVATE Threads::Threads)
         add_test(NAME test_ioc COMMAND test_ioc)
     endif()
+
+    # B33: classificação de IP privado (nta_ipclass.h) usada por GeoIP,
+    # AbuseIPDB e WHOIS. Header puro (<arpa/inet.h>), só fora do Windows.
+    if(NOT WIN32)
+        add_executable(test_ipclass tests/unit/test_ipclass.c)
+        target_include_directories(test_ipclass PRIVATE ${SERVER_INC})
+        add_test(NAME test_ipclass COMMAND test_ipclass)
+    endif()
 endif()
 
 # --- B02: BENCHMARK DE THROUGHPUT pps (opcional, desligado por padrão) -------

@@ -21,6 +21,7 @@
  * ========================================================================= */
 
 #include "nta_whois.h"
+#include "nta_ipclass.h"
 
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -59,15 +60,6 @@ struct NtaWhois {
 /* -------------------------------------------------------------------------- *
  * Helpers                                                                    *
  * -------------------------------------------------------------------------- */
-static int is_private_ip(const char *ip) {
-    if (!ip || !*ip) return 1;
-    if (strncmp(ip, "127.",     4) == 0) return 1;
-    if (strncmp(ip, "192.168.", 8) == 0) return 1;
-    if (strncmp(ip, "10.",      3) == 0) return 1;
-    if (strncmp(ip, "172.",     4) == 0) return 1;
-    return 0;
-}
-
 static unsigned hash_ip(const char *s) {
     unsigned h = 2166136261u;
     while (*s) { h ^= (unsigned char)*s++; h *= 16777619u; }
@@ -276,7 +268,7 @@ NtaWhois *nta_whois_open(int timeout_sec, int ttl_sec) {
 int nta_whois_lookup(NtaWhois *w, const char *ip, NtaWhoisInfo *out) {
     if (!w || !out)        return 0;
     memset(out, 0, sizeof(*out));
-    if (is_private_ip(ip)) return 0;
+    if (nta_ip_is_private(ip)) return 0;
 
     time_t now = time(NULL);
     pthread_mutex_lock(&w->mtx);
