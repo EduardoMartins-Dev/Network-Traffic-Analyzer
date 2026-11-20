@@ -66,6 +66,10 @@ groups:
           severity: warning
           nta_canais: "${NTA_ALERT_CANAIS}"
 
+      # max() sem _time devolve uma tabela sem a coluna de tempo e o Grafana 13.1.2 rejeita a consulta
+      # ("input data must be a wide series but got type long"): a regra ficava em Error e nunca disparava.
+      # aggregateWindow mantem _time e uma serie por src_ip e estagio; o keep descarta as demais colunas
+      # (agent_id, protocol, _field...), que tambem faziam o Grafana recusar o quadro (B32).
       - uid: nta-killchain-critical
         title: Kill chain crítica (score ≥ 85)
         condition: THRESHOLD
@@ -82,7 +86,8 @@ groups:
                   |> range(start: -5m)
                   |> filter(fn: (r) => r._measurement == "traffic" and r._field == "kc_score")
                   |> group(columns: ["src_ip", "kill_chain_stage"])
-                  |> max()
+                  |> aggregateWindow(every: 1m, fn: max, createEmpty: false)
+                  |> keep(columns: ["_time", "_value", "src_ip", "kill_chain_stage"])
           - refId: REDUCE
             datasourceUid: __expr__
             model:
@@ -115,7 +120,7 @@ groups:
         for: 0s
         annotations:
           summary: Progressão crítica na kill chain (score > 85).
-          description: O correlator avançou um IP para estágio avançado — possível exploit/exfil em andamento.
+          description: "O correlator avançou o IP {{ $labels.src_ip }} para o estágio {{ $labels.kill_chain_stage }} — possível exploit/exfil em andamento."
         labels:
           severity: critical
           nta_canais: "${NTA_ALERT_CANAIS}"
