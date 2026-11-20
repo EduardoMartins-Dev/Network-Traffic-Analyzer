@@ -15,338 +15,40 @@
       }
     ]
   },
-  "description": "Visão consolidada (v6+): tráfego, IDS, saúde do pipeline, kill chain, threat map e narrativas IA.",
+  "description": "Enriquecimento do nta-server: GeoIP/ASN, listas de IoC, AbuseIPDB, técnicas MITRE e narrativas LLM.",
   "editable": true,
   "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
+  "graphTooltip": 1,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [
+        "nta"
+      ],
+      "targetBlank": false,
+      "title": "NTA",
+      "type": "dashboards"
+    }
+  ],
   "liveNow": false,
   "panels": [
     {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "influxdb-nta"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1000
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 0,
-        "y": 0
-      },
+      "type": "stat",
       "id": 1,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "pluginVersion": "10.0.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influxdb-nta"
-          },
-          "query": "from(bucket: \"network_traffic\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"pipeline_metrics\" and r._field == \"events_per_sec\")\n  |> last()",
-          "refId": "A"
-        }
-      ],
-      "title": "Eventos/seg (atual)",
-      "type": "stat"
-    },
-    {
+      "title": "IPs geolocalizados",
+      "description": "IPs de origem com lat/lon resolvidos pelo GeoIP.",
       "datasource": {
         "type": "influxdb",
         "uid": "influxdb-nta"
       },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
       "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 6,
-        "y": 0
-      },
-      "id": 2,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "pluginVersion": "10.0.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influxdb-nta"
-          },
-          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"bytes\")\n  |> count()",
-          "refId": "A"
-        }
-      ],
-      "title": "Total de eventos",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "influxdb-nta"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "orange",
-                "value": 1
-              },
-              {
-                "color": "red",
-                "value": 50
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 12,
-        "y": 0
-      },
-      "id": 3,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "pluginVersion": "10.0.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influxdb-nta"
-          },
-          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"is_scan\")\n  |> filter(fn: (r) => r._value == 1.0)\n  |> count()",
-          "refId": "A"
-        }
-      ],
-      "title": "Ataques detectados",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "influxdb-nta"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 18,
-        "y": 0
-      },
-      "id": 4,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "pluginVersion": "10.0.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influxdb-nta"
-          },
-          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"pipeline_metrics\" and (r._field == \"rb_pkt_overflow\" or r._field == \"rb_evt_overflow\"))\n  |> last()\n  |> group()\n  |> sum()",
-          "refId": "A"
-        }
-      ],
-      "title": "Overflow do ring buffer",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "influxdb-nta"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 15,
-            "gradientMode": "opacity",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "pointSize": 4,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": true,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "pps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 16,
         "x": 0,
-        "y": 4
-      },
-      "id": 5,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "y": 0,
+        "w": 4,
+        "h": 4
       },
       "targets": [
         {
@@ -354,383 +56,540 @@
             "type": "influxdb",
             "uid": "influxdb-nta"
           },
-          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"bytes\")\n  |> aggregateWindow(every: v.windowPeriod, fn: count, createEmpty: false)\n  |> group(columns: [\"protocol\"])",
+          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"lat\")\n  |> group()\n  |> distinct(column: \"src_ip\")\n  |> count()",
           "refId": "A"
         }
       ],
-      "title": "Live traffic (pacotes por janela, por protocolo)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "influxdb-nta"
-      },
       "fieldConfig": {
         "defaults": {
+          "unit": "short",
+          "decimals": null,
+          "noValue": "0",
           "color": {
-            "mode": "thresholds"
+            "mode": "fixed",
+            "fixedColor": "#5794F2"
           },
-          "custom": {
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            }
-          },
-          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#5794F2",
                 "value": null
-              },
-              {
-                "color": "orange",
-                "value": 1
-              },
-              {
-                "color": "red",
-                "value": 10
               }
             ]
           }
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 10,
-        "w": 16,
-        "x": 0,
-        "y": 12
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 2,
+      "title": "ASNs ofensivos",
+      "description": "ASNs distintos de onde partiram ataques.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-nta"
       },
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-nta"
+          },
+          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"is_scan\" and r._value == 1.0)\n  |> filter(fn: (r) => exists r.asn_org and r.asn_org != \"\")\n  |> group()\n  |> distinct(column: \"asn_org\")\n  |> count()",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": null,
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#B877D9"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#B877D9",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 3,
+      "title": "Eventos com IoC",
+      "description": "Eventos cujo src_ip está numa lista de IoC.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-nta"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-nta"
+          },
+          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"bytes\")\n  |> filter(fn: (r) => r.ioc_hit == \"1\")\n  |> group()\n  |> aggregateWindow(every: v.windowPeriod, fn: count, createEmpty: false)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": null,
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#F2495C"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#F2495C",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "textMode": "value",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 4,
+      "title": "IPs em listas de IoC",
+      "description": "",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-nta"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-nta"
+          },
+          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"bytes\")\n  |> filter(fn: (r) => r.ioc_hit == \"1\")\n  |> group()\n  |> distinct(column: \"src_ip\")\n  |> count()",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": null,
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds",
+            "fixedColor": "#73BF69"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              },
+              {
+                "color": "#F2495C",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 5,
+      "title": "AbuseIPDB (média)",
+      "description": "Média do abuse score (0–100). Requer ABUSEIPDB_API_KEY no nta-server.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-nta"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-nta"
+          },
+          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"abuse_score\")\n  |> filter(fn: (r) => r._value >= 0.0)\n  |> group()\n  |> mean()",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "noValue": "sem chave",
+          "color": {
+            "mode": "thresholds",
+            "fixedColor": "#73BF69"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#8E8E8E",
+                "value": null
+              },
+              {
+                "color": "#73BF69",
+                "value": 0
+              },
+              {
+                "color": "#FADE2A",
+                "value": 25
+              },
+              {
+                "color": "#F2495C",
+                "value": 75
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 6,
+      "title": "Narrativas geradas",
+      "description": "Incidentes narrados pelo LLM no período.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-nta"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-nta"
+          },
+          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"incident_narrative\" and r._field == \"narrative\")\n  |> group()\n  |> count()",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": null,
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#B877D9"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#B877D9",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "row",
+      "title": "Geografia",
+      "collapsed": false,
       "id": 7,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "panels": []
+    },
+    {
+      "type": "geomap",
+      "id": 8,
+      "title": "Mapa de ameaças",
+      "description": "Densidade e origem dos ataques (GeoIP).",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-nta"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 16,
+        "h": 13
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-nta"
+          },
+          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\")\n  |> filter(fn: (r) => r._field == \"lat\" or r._field == \"lon\" or r._field == \"is_scan\")\n  |> pivot(rowKey: [\"_time\", \"src_ip\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => exists r.lat and exists r.lon and r.is_scan == 1.0)\n  |> group(columns: [\"src_ip\"])\n  |> reduce(identity: {lat: 0.0, lon: 0.0, eventos: 0, ataque: \"\"},\n            fn: (r, accumulator) => ({lat: r.lat, lon: r.lon, eventos: accumulator.eventos + 1, ataque: r.attack_type}))\n  |> group()",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-YlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#FF9830",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
       "options": {
         "basemap": {
-          "config": {},
-          "name": "Layer 0",
-          "type": "default"
+          "type": "xyz",
+          "name": "Base escura",
+          "config": {
+            "url": "https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+            "attribution": "Tiles © Esri"
+          }
         },
         "controls": {
           "mouseWheelZoom": true,
           "showAttribution": true,
-          "showDebug": false,
+          "showZoom": true,
           "showScale": false,
-          "showZoom": true
+          "showDebug": false
         },
         "layers": [
           {
+            "type": "heatmap",
+            "name": "Densidade",
+            "tooltip": false,
+            "location": {
+              "mode": "coords",
+              "latitude": "lat",
+              "longitude": "lon"
+            },
             "config": {
-              "showLegend": true,
+              "blur": 22,
+              "radius": 9,
+              "weight": {
+                "field": "eventos",
+                "fixed": 1,
+                "min": 0,
+                "max": 1
+              }
+            }
+          },
+          {
+            "type": "markers",
+            "name": "Atacantes",
+            "tooltip": true,
+            "location": {
+              "mode": "coords",
+              "latitude": "lat",
+              "longitude": "lon"
+            },
+            "config": {
+              "showLegend": false,
               "style": {
                 "color": {
-                  "fixed": "red"
+                  "field": "eventos",
+                  "fixed": "#F2495C"
                 },
-                "opacity": 0.6,
-                "rotation": {
-                  "fixed": 0,
-                  "max": 360,
-                  "min": -360,
-                  "mode": "mod"
-                },
+                "opacity": 0.85,
                 "size": {
+                  "field": "eventos",
                   "fixed": 6,
-                  "max": 20,
-                  "min": 4
+                  "min": 5,
+                  "max": 18
                 },
                 "symbol": {
                   "fixed": "img/icons/marker/circle.svg",
                   "mode": "fixed"
                 },
+                "text": {
+                  "field": "src_ip",
+                  "fixed": "",
+                  "mode": "field"
+                },
                 "textConfig": {
-                  "fontSize": 12,
+                  "fontSize": 10,
                   "offsetX": 0,
-                  "offsetY": 0,
+                  "offsetY": -14,
                   "textAlign": "center",
                   "textBaseline": "middle"
                 }
               }
-            },
-            "location": {
-              "latitude": "lat",
-              "longitude": "lon",
-              "mode": "coords"
-            },
-            "name": "Ataques",
-            "tooltip": true,
-            "type": "markers"
+            }
           }
         ],
         "tooltip": {
           "mode": "details"
         },
         "view": {
-          "id": "zero",
-          "lat": 0,
-          "lon": 0,
-          "zoom": 2
+          "id": "coords",
+          "lat": 22,
+          "lon": 20,
+          "zoom": 1.6,
+          "allLayers": true
         }
-      },
-      "pluginVersion": "10.0.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influxdb-nta"
-          },
-          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\")\n  |> filter(fn: (r) => r._field == \"lat\" or r._field == \"lon\" or r._field == \"is_scan\")\n  |> pivot(rowKey: [\"_time\", \"src_ip\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => exists r.lat and exists r.lon and r.is_scan == 1.0)\n  |> group(columns: [\"src_ip\"])\n  |> last(column: \"lat\")\n  |> keep(columns: [\"_time\", \"src_ip\", \"attack_type\", \"lat\", \"lon\", \"is_scan\"])",
-          "refId": "A"
-        }
-      ],
-      "title": "Threat map — origem geográfica de ataques",
-      "type": "geomap"
+      }
     },
     {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "influxdb-nta"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisPlacement": "auto",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineWidth": 1,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 8,
-        "x": 16,
-        "y": 12
-      },
-      "id": 8,
-      "options": {
-        "barRadius": 0,
-        "barWidth": 0.7,
-        "fullHighlight": false,
-        "groupWidth": 0.7,
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": false
-        },
-        "orientation": "horizontal",
-        "showValue": "auto",
-        "stacking": "none",
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        },
-        "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influxdb-nta"
-          },
-          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"is_scan\" and r._value == 1.0)\n  |> group(columns: [\"attack_type\"])\n  |> count()\n  |> group()",
-          "refId": "A"
-        }
-      ],
-      "title": "Ataques por tipo (MITRE)",
-      "type": "barchart"
-    },
-    {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "influxdb-nta"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": true,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 22
-      },
+      "type": "bargauge",
       "id": 9,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influxdb-nta"
-          },
-          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"pipeline_metrics\" and r._field == \"events_per_sec\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
-          "refId": "A"
-        }
-      ],
-      "title": "Throughput do pipeline (eventos/seg)",
-      "type": "timeseries"
-    },
-    {
+      "title": "Top ASNs ofensivos",
+      "description": "ASNs com mais eventos de ataque.",
       "datasource": {
         "type": "influxdb",
         "uid": "influxdb-nta"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": true,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 22
-      },
-      "id": 10,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
+        "x": 16,
+        "y": 5,
+        "w": 8,
+        "h": 13
       },
       "targets": [
         {
@@ -738,119 +597,23 @@
             "type": "influxdb",
             "uid": "influxdb-nta"
           },
-          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"pipeline_metrics\" and (r._field == \"rb_pkt_depth\" or r._field == \"rb_evt_depth\"))\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
+          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"is_scan\" and r._value == 1.0)\n  |> filter(fn: (r) => exists r.asn_org and r.asn_org != \"\")\n  |> group(columns: [\"asn_org\"])\n  |> count()\n  |> group()\n  |> sort(columns: [\"_value\"], desc: true)\n  |> limit(n: 10)\n  |> map(fn: (r) => ({asn: r.asn_org, eventos: r._value}))",
           "refId": "A"
         }
       ],
-      "title": "Profundidade dos ring buffers",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "influxdb-nta"
-      },
       "fieldConfig": {
         "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "sem dados",
           "color": {
-            "mode": "thresholds"
+            "mode": "continuous-purples"
           },
-          "custom": {
-            "fillOpacity": 70,
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineWidth": 0,
-            "spanNulls": false
-          },
-          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 30
-              },
-              {
-                "color": "orange",
-                "value": 60
-              },
-              {
-                "color": "red",
-                "value": 85
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 30
-      },
-      "id": 11,
-      "options": {
-        "alignValue": "left",
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "mergeValues": true,
-        "rowHeight": 0.9,
-        "showValue": "auto",
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "10.0.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influxdb-nta"
-          },
-          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"kc_score\")\n  |> filter(fn: (r) => exists r.kill_chain_stage)\n  |> aggregateWindow(every: v.windowPeriod, fn: max, createEmpty: false)\n  |> keep(columns: [\"_time\", \"src_ip\", \"kill_chain_stage\", \"_value\"])\n  |> group(columns: [\"src_ip\"])",
-          "refId": "A"
-        }
-      ],
-      "title": "Kill chain timeline — progressão por IP (score EWMA)",
-      "type": "state-timeline"
-    },
-    {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "influxdb-nta"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "inspect": false
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
+                "color": "#73BF69",
                 "value": null
               }
             ]
@@ -858,73 +621,268 @@
         },
         "overrides": []
       },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "valueMode": "color",
+        "namePlacement": "left",
+        "showUnfilled": true,
+        "sizing": "auto",
+        "minVizHeight": 16,
+        "maxVizHeight": 28,
+        "text": {
+          "titleSize": 14,
+          "valueSize": 18
+        },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Inteligência",
+      "collapsed": false,
+      "id": 10,
       "gridPos": {
-        "h": 8,
+        "h": 1,
         "w": 24,
         "x": 0,
-        "y": 38
+        "y": 18
       },
-      "id": 12,
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
-        "showHeader": true
+      "panels": []
+    },
+    {
+      "type": "piechart",
+      "id": 11,
+      "title": "IoC por lista",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-nta"
       },
-      "pluginVersion": "10.0.0",
+      "description": "Eventos cujo IP de origem está em alguma lista de IoC (deploy/ioc/blocklist.json).",
       "targets": [
         {
           "datasource": {
             "type": "influxdb",
             "uid": "influxdb-nta"
           },
-          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"bytes\")\n  |> group(columns: [\"src_ip\"])\n  |> sum()\n  |> group()\n  |> sort(columns: [\"_value\"], desc: true)\n  |> limit(n: 10)",
+          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"bytes\")\n  |> filter(fn: (r) => r.ioc_hit == \"1\")\n  |> group(columns: [\"ioc_source\"])\n  |> count()\n  |> group()\n  |> map(fn: (r) => ({lista: r.ioc_source, eventos: r._value}))",
           "refId": "A"
         }
       ],
-      "title": "Top 10 IPs de origem (bytes)",
-      "type": "table"
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "sem matches"
+        },
+        "overrides": []
+      },
+      "options": {
+        "pieType": "donut",
+        "displayLabels": [
+          "percent"
+        ],
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "values": [
+            "value"
+          ]
+        },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 8,
+        "h": 9
+      }
     },
     {
+      "type": "bargauge",
+      "id": 12,
+      "title": "Técnicas MITRE ATT&CK",
+      "description": "Eventos por técnica MITRE mapeada no agente.",
       "datasource": {
         "type": "influxdb",
         "uid": "influxdb-nta"
       },
+      "gridPos": {
+        "x": 8,
+        "y": 19,
+        "w": 8,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-nta"
+          },
+          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"is_scan\" and r._value == 1.0)\n  |> filter(fn: (r) => exists r.mitre)\n  |> group(columns: [\"mitre\"])\n  |> count()\n  |> group()\n  |> sort(columns: [\"_value\"], desc: true)\n  |> map(fn: (r) => ({tecnica: r.mitre, eventos: r._value}))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "sem dados",
+          "color": {
+            "mode": "continuous-YlRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "valueMode": "color",
+        "namePlacement": "left",
+        "showUnfilled": true,
+        "sizing": "auto",
+        "minVizHeight": 16,
+        "maxVizHeight": 28,
+        "text": {
+          "titleSize": 14,
+          "valueSize": 18
+        },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        }
+      }
+    },
+    {
+      "type": "table",
+      "id": 13,
+      "title": "Kill chain por ASN",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-nta"
+      },
+      "description": "Maior kc_score por ASN e estágio da kill chain.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-nta"
+          },
+          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"kc_score\")\n  |> filter(fn: (r) => exists r.asn_org and r.asn_org != \"\" and exists r.kill_chain_stage and r.kill_chain_stage != \"IDLE\")\n  |> group(columns: [\"asn_org\", \"kill_chain_stage\"])\n  |> max()\n  |> group()\n  |> sort(columns: [\"_value\"], desc: true)\n  |> limit(n: 15)\n  |> map(fn: (r) => ({asn: r.asn_org, estagio: r.kill_chain_stage, score: r._value}))",
+          "refId": "A"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "custom": {
             "align": "left",
             "cellOptions": {
-              "type": "auto",
-              "wrapText": true
-            },
-            "filterable": true,
-            "inspect": false
+              "type": "auto"
+            }
           },
-          "mappings": []
+          "noValue": "sem dados"
         },
         "overrides": [
           {
             "matcher": {
               "id": "byName",
-              "options": "narrative"
+              "options": "asn"
             },
             "properties": [
               {
+                "id": "displayName",
+                "value": "ASN"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "estagio"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Estágio"
+              },
+              {
                 "id": "custom.width",
-                "value": 720
+                "value": 110
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "IDLE": {
+                        "color": "#8E8E8E",
+                        "index": 0,
+                        "text": "IDLE"
+                      },
+                      "RECON": {
+                        "color": "#FADE2A",
+                        "index": 1,
+                        "text": "RECON"
+                      },
+                      "EXPLOIT": {
+                        "color": "#FF9830",
+                        "index": 2,
+                        "text": "EXPLOIT"
+                      },
+                      "EXFIL": {
+                        "color": "#F2495C",
+                        "index": 3,
+                        "text": "EXFIL"
+                      },
+                      "C2": {
+                        "color": "#B877D9",
+                        "index": 4,
+                        "text": "C2"
+                      },
+                      "COMPLETE": {
+                        "color": "#B877D9",
+                        "index": 5,
+                        "text": "COMPLETE"
+                      }
+                    }
+                  }
+                ]
               },
               {
                 "id": "custom.cellOptions",
                 "value": {
-                  "type": "auto",
-                  "wrapText": true
+                  "type": "color-background",
+                  "mode": "basic"
                 }
               }
             ]
@@ -932,16 +890,188 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "time"
+              "options": "score"
             },
             "properties": [
               {
+                "id": "displayName",
+                "value": "Kill chain score"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
                 "id": "custom.width",
-                "value": 170
+                "value": 200
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "gradient",
+                  "valueDisplayMode": "text"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-YlRd"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 19,
+        "w": 8,
+        "h": 9
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 14,
+      "title": "AbuseIPDB score por IP",
+      "description": "Abuse score (0–100) dos IPs com reputação ruim. Vazio sem ABUSEIPDB_API_KEY.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-nta"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 24,
+        "h": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-nta"
+          },
+          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"abuse_score\")\n  |> filter(fn: (r) => r._value > 0.0)\n  |> group(columns: [\"src_ip\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: max, createEmpty: false)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 25,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "barAlignment": 0,
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "spanNulls": false,
+            "axisSoftMax": 100
+          },
+          "noValue": "Sem dados: configure ABUSEIPDB_API_KEY no nta-server"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Narrativas de incidente",
+      "collapsed": false,
+      "id": 15,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 33
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "id": 16,
+      "title": "Narrativas de incidente (LLM)",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-nta"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 34,
+        "w": 24,
+        "h": 11
+      },
+      "description": "Última narrativa de cada IP com kc_score ≥ 80, gerada pelo nta-server via LLM (Groq). Últimas 24 h.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-nta"
+          },
+          "query": "import \"strings\"\nfrom(bucket: \"network_traffic\")\n  |> range(start: -24h)\n  |> filter(fn: (r) => r._measurement == \"incident_narrative\" and r._field == \"narrative\")\n  |> group(columns: [\"src_ip\"])\n  |> sort(columns: [\"_time\"])\n  |> last()\n  |> group()\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 10)\n  |> map(fn: (r) => ({r with _value: strings.replaceAll(v: r._value, t: \"\\\\n\", u: \" \")}))\n  |> keep(columns: [\"_time\", \"src_ip\", \"attack_type\", \"kill_chain_stage\", \"_value\"])",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "noValue": "Nenhum incidente crítico narrado nas últimas 24 h"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "_time"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Quando"
+              },
+              {
+                "id": "custom.width",
+                "value": 190
               },
               {
                 "id": "unit",
-                "value": "dateTimeAsIso"
+                "value": "dateTimeAsLocal"
               }
             ]
           },
@@ -952,8 +1082,25 @@
             },
             "properties": [
               {
+                "id": "displayName",
+                "value": "IP"
+              },
+              {
                 "id": "custom.width",
                 "value": 130
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#5794F2"
+                }
               }
             ]
           },
@@ -964,8 +1111,26 @@
             },
             "properties": [
               {
+                "id": "displayName",
+                "value": "Ataque"
+              },
+              {
                 "id": "custom.width",
                 "value": 130
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "NONE": {
+                        "text": "—",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
               }
             ]
           },
@@ -976,221 +1141,115 @@
             },
             "properties": [
               {
+                "id": "displayName",
+                "value": "Estágio"
+              },
+              {
                 "id": "custom.width",
-                "value": 130
+                "value": 95
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "IDLE": {
+                        "color": "#8E8E8E",
+                        "index": 0,
+                        "text": "IDLE"
+                      },
+                      "RECON": {
+                        "color": "#FADE2A",
+                        "index": 1,
+                        "text": "RECON"
+                      },
+                      "EXPLOIT": {
+                        "color": "#FF9830",
+                        "index": 2,
+                        "text": "EXPLOIT"
+                      },
+                      "EXFIL": {
+                        "color": "#F2495C",
+                        "index": 3,
+                        "text": "EXFIL"
+                      },
+                      "C2": {
+                        "color": "#B877D9",
+                        "index": 4,
+                        "text": "C2"
+                      },
+                      "COMPLETE": {
+                        "color": "#B877D9",
+                        "index": 5,
+                        "text": "COMPLETE"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "backend"
+              "options": "_value"
             },
             "properties": [
               {
-                "id": "custom.width",
-                "value": 160
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "agent_id"
-            },
-            "properties": [
+                "id": "displayName",
+                "value": "Narrativa"
+              },
               {
-                "id": "custom.width",
-                "value": 110
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "auto",
+                  "wrapText": true
+                }
+              },
+              {
+                "id": "custom.inspect",
+                "value": true
               }
             ]
           }
         ]
       },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 46
-      },
-      "id": 13,
       "options": {
-        "cellHeight": "md",
+        "showHeader": true,
+        "cellHeight": "lg",
         "footer": {
-          "show": false,
-          "reducer": [
-            "sum"
-          ],
-          "fields": ""
-        },
-        "showHeader": true
-      },
-      "pluginVersion": "10.0.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influxdb-nta"
-          },
-          "query": "from(bucket: \"network_traffic\")\n  |> range(start: -6h)\n  |> filter(fn: (r) => r._measurement == \"incident_narrative\")\n  |> filter(fn: (r) => r._field == \"narrative\")\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 20)\n  |> keep(columns: [\"_time\",\"agent_id\",\"src_ip\",\"attack_type\",\"kill_chain_stage\",\"backend\",\"_value\"])\n  |> rename(columns: {_value: \"narrative\", _time: \"time\"})",
-          "refId": "A"
+          "show": false
         }
-      ],
-      "title": "Narrativas IA — Incidentes recentes",
+      },
       "transformations": [
         {
           "id": "organize",
           "options": {
             "indexByName": {
-              "time": 0,
+              "_time": 0,
               "src_ip": 1,
               "attack_type": 2,
               "kill_chain_stage": 3,
-              "agent_id": 4,
-              "backend": 5,
-              "narrative": 6
-            },
-            "excludeByName": {}
+              "_value": 4
+            }
           }
         }
-      ],
-      "type": "table"
-    },
-    {
-      "id": 14,
-      "type": "barchart",
-      "title": "Top ASs ofensivos (eventos com is_scan)",
-      "datasource": {
-        "type": "influxdb",
-        "uid": "influxdb-nta"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 56,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influxdb-nta"
-          },
-          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"is_scan\" and r._value == 1.0)\n  |> filter(fn: (r) => r.asn_org != \"\")\n  |> group(columns: [\"asn_org\"])\n  |> count()\n  |> group()\n  |> sort(columns: [\"_value\"], desc: true)\n  |> limit(n: 10)"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
-      "options": {}
-    },
-    {
-      "id": 15,
-      "type": "piechart",
-      "title": "IoC matches por lista",
-      "datasource": {
-        "type": "influxdb",
-        "uid": "influxdb-nta"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 56,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influxdb-nta"
-          },
-          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"bytes\")\n  |> filter(fn: (r) => r.ioc_hit == \"1\")\n  |> group(columns: [\"ioc_source\"])\n  |> count()\n  |> group()"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "showLegend": true,
-          "displayMode": "table",
-          "placement": "right"
-        }
-      }
-    },
-    {
-      "id": 16,
-      "type": "timeseries",
-      "title": "AbuseIPDB score > 0 (timeseries)",
-      "datasource": {
-        "type": "influxdb",
-        "uid": "influxdb-nta"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 64,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influxdb-nta"
-          },
-          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"abuse_score\")\n  |> filter(fn: (r) => r._value > 0)\n  |> aggregateWindow(every: v.windowPeriod, fn: max, createEmpty: false)"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
-      "options": {}
-    },
-    {
-      "id": 17,
-      "type": "table",
-      "title": "Kill chain stage × ASN (top 20)",
-      "datasource": {
-        "type": "influxdb",
-        "uid": "influxdb-nta"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 64,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influxdb-nta"
-          },
-          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"traffic\" and r._field == \"kc_score\")\n  |> filter(fn: (r) => r.asn_org != \"\" and exists r.kill_chain_stage)\n  |> group(columns: [\"asn_org\", \"kill_chain_stage\"])\n  |> max()\n  |> group()\n  |> keep(columns: [\"asn_org\", \"kill_chain_stage\", \"_value\"])\n  |> sort(columns: [\"_value\"], desc: true)\n  |> limit(n: 20)"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
-      "options": {}
+      ]
     }
   ],
   "refresh": "10s",
   "schemaVersion": 39,
-  "style": "dark",
   "tags": [
     "nta",
-    "threat",
-    "demo",
-    "v6"
+    "threat-intel"
   ],
   "templating": {
     "list": []
@@ -1199,10 +1258,17 @@
     "from": "now-1h",
     "to": "now"
   },
-  "timepicker": {},
-  "timezone": "",
-  "title": "Threat Intelligence — Demo",
+  "timepicker": {
+    "refresh_intervals": [
+      "10s",
+      "30s",
+      "1m",
+      "5m"
+    ]
+  },
+  "timezone": "browser",
+  "title": "NTA — Threat Intelligence",
   "uid": "nta-threat-intel",
-  "version": 3,
+  "version": 1,
   "weekStart": ""
 }
