@@ -29,6 +29,7 @@
 #include "nta_narrator.h"
 #include "nta_health.h"
 #include "nta_scaler.h"
+#include "nta_export.h"
 #include "cJSON.h"
 
 atomic_int g_nta_stop = 0;
@@ -134,7 +135,25 @@ typedef struct {
     const char *narrator_queue;
     int         min_score;      /* 0 desabilita republish kc_score */
     int         abuse_min;      /* 0 desabilita republish abuse_score */
+    NtaExport  *exp;            /* shared, NULL = exportação SIEM desligada (B11) */
 } TrafficCtx;
+
+/* Exportação SIEM (B11) para um body que o Influx não aceitou: o destino de
+ * exportação é independente, então o alerta sai mesmo assim. */
+static void export_body_alerts(NtaExport *exp, const char *body, size_t len,
+                               const char *agent_id) {
+    cJSON *root = cJSON_ParseWithLength(body, len);
+    if (!root) return;
+    if (cJSON_IsArray(root)) {
+        const cJSON *item = NULL;
+        cJSON_ArrayForEach(item, root) {
+            if (cJSON_IsObject(item)) nta_export_submit(exp, item, agent_id);
+        }
+    } else if (cJSON_IsObject(root)) {
+        nta_export_submit(exp, root, agent_id);
+    }
+    cJSON_Delete(root);
+}
 
 static void republish_if_high(TrafficCtx *ctx, const cJSON *evt,
                               const char *agent_id) {
@@ -187,11 +206,12 @@ static void traffic_handler(const char *body, size_t len,
     if (rc != 0) {
         fprintf(stderr, "[MSG] descarte agent=%s len=%zu (escrita falhou)\n",
                 agent_id, len);
+        if (ctx->exp) export_body_alerts(ctx->exp, body, len, agent_id);
         return;
     }
 
-    /* Skip republish parse se ambos triggers off. */
-    if (ctx->min_score <= 0 && (ctx->abuse_min <= 0 || !ctx->abuse)) return;
+    /* Skip republish parse se ambos triggers off e exportação desligada. */
+    if (ctx->min_score <= 0 && (ctx->abuse_min <= 0 || !ctx->abuse) && !ctx->exp) return;
 
     cJSON *root = cJSON_ParseWithLength(body, len);
     if (!root) return;
@@ -199,10 +219,14 @@ static void traffic_handler(const char *body, size_t len,
     if (cJSON_IsArray(root)) {
         const cJSON *item = NULL;
         cJSON_ArrayForEach(item, root) {
-            if (cJSON_IsObject(item)) republish_if_high(ctx, item, agent_id);
+            if (cJSON_IsObject(item)) {
+                republish_if_high(ctx, item, agent_id);
+                nta_export_submit(ctx->exp, item, agent_id);
+            }
         }
     } else if (cJSON_IsObject(root)) {
         republish_if_high(ctx, root, agent_id);
+        nta_export_submit(ctx->exp, root, agent_id);
     }
     cJSON_Delete(root);
 }
@@ -255,6 +279,7 @@ typedef struct {
     NtaAbuse       *abuse;     /* shared (v8.0 M4) */
     int             abuse_min; /* threshold p/ republish narrator */
     NtaWhois       *whois;     /* shared (v8.0 M5) — só usado pelo narrator worker */
+    NtaExport      *exp;       /* shared (B11), NULL = desligado */
     NtaAmqp         amqp;      /* per-worker */
     NtaInflux       influx;    /* per-worker */
     const NtaNarratorCfg *ncfg;  /* só pro narrator worker */
@@ -300,6 +325,7 @@ static void *worker_main(void *arg) {
             .narrator_queue = w->cfg->narrator_queue,
             .min_score      = can_narrate ? w->cfg->narrator_min_score : 0,
             .abuse_min      = can_narrate ? w->abuse_min : 0,
+            .exp            = w->exp,
         };
         int rc = nta_amqp_consume_loop(&w->amqp, w->cfg->queue_name,
                                        traffic_handler, &ctx, &w->stop);
@@ -391,6 +417,7 @@ typedef struct {
     NtaGeo         *geo;
     NtaIocStore   *ioc_store;   /* shared (v8.0 M3, recarga B03) */
     NtaAbuse       *abuse;       /* shared (v8.0 M4) */
+    NtaExport      *exp;         /* shared (B11), NULL = desligado */
     int             abuse_min;
     int             next_id;     /* contador monotônico p/ worker_id */
 } TrafficPool;
@@ -427,6 +454,7 @@ static int pool_spawn_one_locked(TrafficPool *p) {
     w->ioc_store = p->ioc_store;
     w->abuse     = p->abuse;
     w->abuse_min = p->abuse_min;
+    w->exp       = p->exp;
     atomic_init(&w->stop, 0);
     if (pthread_create(&p->tids[idx], NULL, worker_main, w) != 0) {
         fprintf(stderr, "[POOL] pthread_create slot=%d falhou\n", idx);
@@ -627,6 +655,13 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    /* Exportação SIEM (B11). Desligada (NTA_EXPORT_FORMAT vazio) → exp = NULL e
+     * nada muda no caminho do consumer. */
+    NtaExportCfg ecfg;
+    nta_export_cfg_load(&ecfg);
+    NtaExport *exp = nta_export_open(&ecfg);
+    pool.exp = exp;
+
     /* Bloqueia SIGINT/SIGTERM ANTES de spawnar — workers herdam a máscara
      * e ficam imunes. Signal vai sempre pra main, que seta o stop flag.   */
     sigset_t block_set, prev_set;
@@ -701,6 +736,7 @@ int main(int argc, char *argv[]) {
 
     /* Espera todos terminarem ao receber stop global. */
     pool_join_all(&pool);
+    nta_export_close(exp, NULL);   /* workers já pararam: nada mais é submetido */
     if (metrics_ok)  pthread_join(metrics_tid,  NULL);
     if (narrator_ok) pthread_join(narrator_tid, NULL);
     if (scaler_ok)   pthread_join(scaler_tid,   NULL);

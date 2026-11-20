@@ -114,6 +114,7 @@ if(NTA_BUILD_SERVER AND NOT WIN32)
             src/server/nta_narrator.c
             src/server/nta_scaler.c
             src/server/nta_health.c
+            src/server/nta_export.c
             ${CJSON_DIR}/cJSON.c
     )
 
@@ -181,6 +182,16 @@ if(NTA_BUILD_TESTS)
         add_executable(test_ipclass tests/unit/test_ipclass.c)
         target_include_directories(test_ipclass PRIVATE ${SERVER_INC})
         add_test(NAME test_ipclass COMMAND test_ipclass)
+    endif()
+
+    # B11: exportação SIEM (CEF/ECS/syslog) do nta-server. Só fora do Windows
+    # (sockets POSIX). Sem libcurl: só render, fila e envio para loopback.
+    if(NOT WIN32)
+        add_executable(test_export tests/unit/test_export.c
+                src/server/nta_export.c ${CJSON_DIR}/cJSON.c)
+        target_include_directories(test_export PRIVATE ${SERVER_INC})
+        target_link_libraries(test_export PRIVATE Threads::Threads)
+        add_test(NAME test_export COMMAND test_export)
     endif()
 endif()
 
