@@ -46,6 +46,8 @@ O motor IDS cobre 10 vetores de ataque com detecção comportamental adaptativa:
 | ARP Spoofing | ARP | T1557 | MAC reivindicando IPs diferentes |
 | DDoS Amplification | UDP/DNS | T1498 | Ratio response/request > 10:1 |
 
+> **DDoS Amplification:** o alerta sai pelo IP do refletor. Um refletor DNS que só envia respostas é detectado quando o sensor vê a consulta forjada com origem e destino fora de `HOME_NET` (o analyzer conta a consulta também no servidor de destino). Não detecta com a vítima dentro de `HOME_NET` (por exemplo, no gateway da vítima), porque essa consulta é descartada pelo filtro de `HOME_NET`. Um resolvedor com mistura de consultas DNSKEY/ANY, em que a proporção de respostas grandes fica entre cerca de 60 % e 70 %, pode disparar (falso positivo). Esse limite foi medido só com pcap sintético. Ver [tests/pcaps/README.md](tests/pcaps/README.md).
+
 ### Baseline EWMA adaptativo
 
 Cada IP rastreado mantém médias móveis exponencialmente ponderadas de pps, portas/min e DNS queries/min. Os thresholds hardcoded são usados apenas durante a calibração (primeiras 100 amostras); depois, o IDS aprende os limites normais de cada rede.
@@ -55,6 +57,17 @@ Cada IP rastreado mantém médias móveis exponencialmente ponderadas de pps, po
 Máquina de estados por IP: `IDLE → RECON → EXPLOIT → EXFIL → COMPLETE`
 
 Cada detecção avança o estágio e acumula um score 0–100. Todos os eventos de um mesmo incidente são correlacionados e publicados com `kill_chain_stage`, `kc_score` e `mitre_technique` no JSON.
+
+### Camada ATT&CK Navigator
+
+`scripts/mitre_layer.py` gera a camada do [ATT&CK Navigator](https://mitre-attack.github.io/attack-navigator/) com as técnicas que o NTA emite. A fonte é `attack_to_mitre()` em `src/agent/analysis/analyzer.c`, lida pelo próprio script:
+
+```sh
+scripts/mitre_layer.py -o nta-mitre-layer.json   # sem -o, imprime no stdout
+python3 scripts/test_mitre_layer.py              # testa o script contra o analyzer.c
+```
+
+No Navigator, use *Open Existing Layer > Upload* com o JSON gerado.
 
 ---
 
@@ -156,13 +169,17 @@ Network-Traffic-Analyzer/
 ├── third_party/cjson/        # cJSON (vendored)
 ├── tests/
 │   ├── unit/                 # testes unitários (ctest)
-│   └── pcaps/                # PCAPs sintéticos + gabaritos (gen_pcaps.py)
+│   ├── pcaps/                # 14 PCAPs sintéticos + gabaritos (gen_pcaps.py)
+│   ├── fuzz/                 # harness libFuzzer do parser
+│   └── bench/                # benchmark de throughput pps (opcional)
 ├── installer/                # instalador Windows (Inno Setup)
 ├── scripts/
 │   ├── up.sh / down.sh       # sobe/derruba a stack do servidor (containers)
 │   ├── quickstart.sh         # install + up + smoke em um comando
 │   ├── install.sh            # dependências por SO + build do agente
 │   ├── smoke-test.sh         # build + replay + sniff curto
+│   ├── ioc_update.sh         # baixa feed IoC (Feodo), valida, troca blocklist e SIGHUP
+│   ├── mitre_layer.py        # camada ATT&CK Navigator (test_mitre_layer.py testa)
 │   ├── gen_agent_cert.sh     # CA + certs mTLS (broker e agentes)
 │   ├── provision_agent.sh    # user RabbitMQ + cert + env de um agente
 │   ├── influx_retention.sh   # retention 7d/90d + downsampling
@@ -172,7 +189,7 @@ Network-Traffic-Analyzer/
 │   ├── nta-server.Dockerfile # imagem do nta-server (usada pelo compose)
 │   ├── agent.env.example     # config do agente (--config / systemd / serviço Windows)
 │   ├── agent.service         # unit systemd do agente (Linux)
-│   ├── ioc/                  # blocklist.json.example
+│   ├── ioc/                  # blocklist.json.example e README.md (feeds e recarga)
 │   ├── rabbitmq/             # rabbitmq.conf (TLS/mTLS) + plugins
 │   └── secrets/              # *.env.example (Groq, AbuseIPDB); certs gerados
 ├── data/                     # GeoLite2 (.mmdb baixados à parte — ver READMEs)
@@ -374,7 +391,7 @@ suportado — o pipeline usa atômicos C11, ainda experimentais no MSVC.
 pacman -S --needed mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,rabbitmq-c}
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNPCAP_SDK_DIR="C:/Npcap-sdk"
 cmake --build build
-./build/NetworkTrafficAnalyzer.exe --replay-dir tests/pcaps   # valida: 6/6
+./build/NetworkTrafficAnalyzer.exe --replay-dir tests/pcaps   # valida: 12/12 (14 pcaps; 2 sem gabarito)
 ./build/NetworkTrafficAnalyzer.exe --list-interfaces          # \Device\NPF_{GUID}
 ```
 
@@ -447,10 +464,7 @@ Não requer privilégio nem RabbitMQ em execução.
   --report tests/report.json
 ```
 
-> ⚠️ O diretório `tests/pcaps/` contém apenas os **gabaritos** (`.json`).
-> Os arquivos `.pcap` precisam ser baixados de datasets públicos antes de
-> rodar — consulte [tests/pcaps/README.md](tests/pcaps/README.md). Sem eles,
-> o replay processa zero arquivos e sai com sucesso vazio.
+> `tests/pcaps/` tem 14 `.pcap` sintéticos e determinísticos, cada um com gabarito `.json`. Doze têm detecções esperadas; `malformed` e `dns-normal` têm gabarito vazio (`expected: []`) e o replay deles deve reportar `Detecções capturadas: 0`. Os arquivos são gerados por `tests/pcaps/gen_pcaps.py`. Para tráfego real, consulte [tests/pcaps/README.md](tests/pcaps/README.md).
 
 Saída esperada:
 
@@ -676,7 +690,7 @@ O `nta-server` enriquece cada evento com **4 fontes externas**, todas opcionais 
 |---|---|---|---|---|
 | **GeoLite2-City** | mmdb offline | fields `lat`, `lon` | 4096 buckets, sem TTL | ~1µs |
 | **GeoLite2-ASN**  | mmdb offline | tags `asn` (`AS15169`), `asn_org` (`GOOGLE`) | mesma do City | ~1µs |
-| **IoC framework** | `deploy/ioc/blocklist.json` local | tags `ioc_hit=1`, `ioc_source=<lista>` | hashtable read-only | O(1) sem rede |
+| **IoC framework** | `deploy/ioc/blocklist.json` local | tags `ioc_hit=1`, `ioc_source=<lista>` | hashtable (recarga por SIGHUP) | O(1) sem rede |
 | **AbuseIPDB** | cloud API (libcurl) | field `abuse_score` (0-100) | 24h hit / 5min miss | ~200ms-2s (cold), instant (warm) |
 | **WHOIS nativo** | TCP socket :43 (BSD sockets) | prompt LLM (não tag) | 24h hit / 5min miss | ~200ms-2s |
 
@@ -706,9 +720,9 @@ O `nta-server` enriquece cada evento com **4 fontes externas**, todas opcionais 
 #    Detalhes em data/GeoLite2-*.mmdb.README.md
 ls data/GeoLite2-City.mmdb data/GeoLite2-ASN.mmdb   # ambos ~/data/
 
-# 2. IoC — cópia do example, popular com feeds reais
-cp deploy/ioc/blocklist.json.example deploy/ioc/blocklist.json
-# Editar e colar IPs do Feodo Tracker, AbuseCH, etc
+# 2. IoC — feed Feodo Tracker (abuse.ch), sem chave de API; agende o script (ver deploy/ioc/README.md)
+scripts/ioc_update.sh
+# Manual: cp deploy/ioc/blocklist.json.example deploy/ioc/blocklist.json e cole os IPs
 
 # 3. AbuseIPDB — conta grátis em abuseipdb.com (1000 checks/dia)
 cp deploy/secrets/abuseipdb.env.example deploy/secrets/abuseipdb.env
@@ -721,6 +735,19 @@ Banner do `nta-server` confirma quais carregaram:
 ```
 ▶ ... → InfluxDB (+GeoIP) (+IoC) (+Abuse) (+WHOIS)
 ```
+
+### Recarga do IoC (SIGHUP)
+
+O `scripts/ioc_update.sh` troca `blocklist.json` e envia SIGHUP ao container `nta-server`, que recarrega a lista sem reiniciar (também dá para usar `docker kill -s HUP nta-server`):
+
+```sh
+docker logs nta-server 2>&1 | grep '\[IOC\]'
+```
+
+- Lista válida: `[IOC] lista recarregada: N IPs`. Os eventos seguintes já usam a nova tabela.
+- Lista inválida, truncada, sem IP válido ou vazia: `[IOC] reload rejeitado ... — lista anterior continua ativa`. Uma lista sem nenhum IP é rejeitada, então a blocklist não pode ser esvaziada por reload.
+- O `ioc_update.sh` valida o feed antes de trocar o arquivo; se algo falhar, o `blocklist.json` atual fica como está.
+- Agendamento (cron ou systemd timer) e limites de uso dos feeds: [deploy/ioc/README.md](deploy/ioc/README.md).
 
 ### Dual-trigger narrator (v8.0 M4)
 
@@ -804,6 +831,7 @@ Em `tests/unit/` (harness próprio, sem dependências), rodados pelo `ctest`:
 | `test_config` | Parser do `--config`: BOM, CRLF, aspas, valor vazio, precedência do ambiente |
 | `test_analyzer` | Detecções com timestamps controlados: janela do brute force, progressão e score da kill chain, HOME_NET |
 | `test_whois` | Parser WHOIS do nta-server (ARIN, RIPE, LACNIC, referral IANA) — só Linux |
+| `test_ioc` | Store do IoC do nta-server: parser IPv4/IPv6, rejeição de lista inválida na recarga, leitores × recarga em paralelo — só fora do Windows |
 
 ```bash
 cmake -S . -B build && cmake --build build
@@ -812,11 +840,15 @@ ctest --test-dir build --output-on-failure
 
 ### CI/CD
 
-O workflow `.github/workflows/test-ids.yml` executa a cada push/PR:
+O workflow `.github/workflows/test-ids.yml` roda em push para `main` e `V4.0` e em PR para `main`:
 1. Linux: compila, roda os testes unitários e o replay (`--replay-dir tests/pcaps/`, falha se o score < 80%)
 2. Sanitizers: testes + replay sob ASan/UBSan — qualquer acesso inválido ou comportamento indefinido reprova
-3. Windows (MSYS2): compila o `.exe` estático, roda os testes unitários nativamente e compila o instalador
-4. Imagem Docker do `nta-server`: build + smoke do `/health`
+3. ThreadSanitizer no `test_ioc` (job `tsan-ioc`): **não bloqueante**
+4. Fuzzing do parser (job `fuzz-smoke`, libFuzzer + ASan/UBSan, 120 s sobre os frames dos pcaps): **não bloqueante**; crashes vão ao artefato `fuzz-parser-artifacts`
+5. Windows (MSYS2): compila o `.exe` estático, roda os testes unitários nativamente e compila o instalador
+6. Imagem Docker do `nta-server`: build + smoke do `/health`
+
+Fora do `ctest` e do CI: `python3 scripts/test_mitre_layer.py` (stdlib) testa a camada ATT&CK, e o benchmark `tests/bench/` só compila com `-DNTA_BUILD_BENCH=ON`.
 
 ---
 
@@ -828,6 +860,25 @@ O workflow `.github/workflows/test-ids.yml` executa a cada push/PR:
 | InfluxDB UI | http://localhost:8086 | admin | `INFLUX_PASSWORD` (adminpassword123) |
 | Grafana | http://localhost:3000 | admin | `GRAFANA_ADMIN_PASSWORD` (admin) |
 | nta-server health | http://localhost:9091/health | — | — |
+
+### Alertas
+
+Regras em [`grafana/provisioning/alerting/alert-rules.yaml`](grafana/provisioning/alerting/alert-rules.yaml), avaliadas a cada 1 min contra o InfluxDB:
+
+| Regra | Dispara quando |
+|---|---|
+| `nta-attack-detected` | há detecção de ataque (`is_scan=1`) nos últimos 5 min; uma instância por `src_ip` e `attack_type` |
+| `nta-killchain-critical` | `kc_score` acima de 85 |
+| `nta-pipeline-overflow` | há overflow do ring buffer (`rb_pkt_overflow` ou `rb_evt_overflow`) por 2 min |
+| `nta-host-offline` | um agente não envia `pipeline_metrics` há mais de 300 s; uma instância por `agent_id` |
+
+**Canais.** O Telegram recebe todos os alertas (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`). Slack, Discord e ntfy são opcionais: cada alerta carrega o label `nta_canais`, preenchido com `NTA_ALERT_CANAIS` (ex.: `slack,ntfy`), e um canal só recebe se o nome dele estiver nessa lista. URLs e token ficam no `.env`:
+
+- `SLACK_WEBHOOK_URL`: Incoming Webhook do Slack.
+- `DISCORD_WEBHOOK_URL`: webhook do canal no Discord.
+- `NTFY_URL` e `NTFY_ACCESS_TOKEN`: URL completa do tópico e token (só para tópico protegido). O ntfy entra por webhook, porque o Grafana 13.1.2 recusa o tipo `ntfy`; a mensagem chega como JSON do Grafana, não como texto.
+
+No docker-compose, URL vazia vira um placeholder `.invalid` (não resolve), então o canal só funciona com a URL preenchida. **Fora do compose**, URLs de canal vazias fazem o provisioning do Grafana falhar (achado não reproduzido nesta revisão). Ver [`.env.example`](.env.example) e [`notification-policies.yaml`](grafana/provisioning/alerting/notification-policies.yaml).
 
 ---
 
@@ -846,6 +897,7 @@ O workflow `.github/workflows/test-ids.yml` executa a cada push/PR:
 | v6.0 | AI Narrator (LLM via Groq) | ✅ migrado para C em v7.0 |
 | v7.0 | nta-server em C + narrator C (Groq) + pool adaptativo (Mgmt API) + retention 7d/90d + mTLS multi-agente | ✅ feature-complete · cluster RabbitMQ deferido p/ v10.0 |
 | v8.0 | Threat Intelligence (GeoLite2-City+ASN, IoC framework, AbuseIPDB + dual-trigger narrator, WHOIS nativo) | ✅ feature-complete |
+| pós-v8.1 (em `main`, sem tag) | Alertas Slack/Discord/ntfy opcionais; feeds IoC automáticos e recarga por SIGHUP; camada ATT&CK Navigator; detecção de refletor DNS (AMPLIFICATION); alerta de host offline; pcaps de cobertura; fuzzing e benchmark de pps | ✅ |
 | v9.0 | Alta Performance (AF_PACKET + TPACKET_V3 + zero-copy) | Planejado |
 | v10.0 | Produção: VPS + Terraform + Nginx + Let's Encrypt (deploy final) | Planejado |
 
@@ -853,4 +905,4 @@ O workflow `.github/workflows/test-ids.yml` executa a cada push/PR:
 
 ## Licença
 
-Distribuído sob a **Licença MIT**. Contribuições via Pull Request são bem-vindas.
+Distribuído sob a **Licença MIT**. Contribuições via Pull Request são bem-vindas. Veja [CONTRIBUTING.md](CONTRIBUTING.md) para o fluxo; o [CLAUDE.md](CLAUDE.md) tem o contexto do projeto (arquitetura, convenções e pendências conhecidas).
