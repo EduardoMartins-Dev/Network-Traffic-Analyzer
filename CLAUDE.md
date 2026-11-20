@@ -28,7 +28,7 @@ nta-server → narrator_queue → Groq (LLM) → incident_narrative
 
 **Pipeline do agente (4 threads):** `capture_th` → `rb_pkt` → `analysis_th` → `rb_evt` → `publish_th` (+ `metrics_th`). Filas SPSC lock-free com atômicos C11; publicação em lote (`AGENT_BATCH_SIZE`, `AGENT_BATCH_TIMEOUT_MS`).
 
-**Detecções (10):** Port Scan, ICMP Flood, SYN Flood, Null Scan, Xmas Scan, SYN/FIN Scan, Brute Force (22/21/3389), DNS Tunneling, ARP Spoofing, DDoS Amplification. O agente analisa IPv4 (EtherType `0x0800`) e IPv6 (`0x86DD`, com até 8 cabeçalhos de extensão). Sobre IPv6 valem Port Scan, SYN Flood, Null/Xmas/SYN-FIN Scan, Brute Force, DNS Tunneling, ICMP Flood (ICMPv6 echo request) e DDoS Amplification; ARP Spoofing fica só em IPv4 e NDP spoof está fora do escopo. Kill chain: `IDLE → RECON → EXPLOIT → EXFIL → COMPLETE`, janela de 30 min, score 0–100; o narrator dispara com `kc_score >= 80` ou `abuse_score >= 75`.
+**Detecções (10):** Port Scan, ICMP Flood, SYN Flood, Null Scan, Xmas Scan, SYN/FIN Scan, Brute Force (22/21/3389), DNS Tunneling, ARP Spoofing, DDoS Amplification. O agente analisa IPv4 (EtherType `0x0800`) e IPv6 (`0x86DD`, com até 8 cabeçalhos de extensão). Sobre IPv6 valem Port Scan, SYN Flood, Null/Xmas/SYN-FIN Scan, Brute Force, DNS Tunneling, ICMP Flood (ICMPv6 echo request) e DDoS Amplification; ARP Spoofing fica só em IPv4 e NDP spoof está fora do escopo. O agente pula tags VLAN 802.1Q (`0x8100`) e 802.1ad/QinQ (`0x88A8`), até 4 empilhadas; quadro com tag cortada ou com mais de 4 tags é descartado. Fragmentos IPv4 com offset != 0 e IPv6 não iniciais são descartados e contados (`frag_discarded`); fragmento inicial só analisa o L4 que cabe em `tot_len` (IPv4) ou `payload_len` (IPv6). Não há remontagem de fragmentos. Kill chain: `IDLE → RECON → EXPLOIT → EXFIL → COMPLETE`, janela de 30 min, score 0–100; o narrator dispara com `kc_score >= 80` ou `abuse_score >= 75`.
 
 ## Especificações técnicas
 
@@ -52,7 +52,7 @@ Plataformas do agente: Linux, FreeBSD, macOS e Windows nativo (serviço `NTAAgen
 ```
 include/agent|server/   headers          src/agent/{analysis,capture,core,output,platform,replay}
 src/server/             um .c por módulo  third_party/cjson   cJSON vendored
-tests/unit/             ctest             tests/pcaps/        26 pcaps sintéticos (22 com gabarito de detecção; 4 sem alerta)
+tests/unit/             ctest             tests/pcaps/        33 pcaps sintéticos (26 com gabarito de detecção; 7 com `expected: []`, 0 alertas)
 tests/fuzz/             libFuzzer         tests/bench/        benchmark de pps (opcional)
 deploy/ scripts/ grafana/ installer/ .github/workflows/        infra, automação, dashboards, CI
 ```
@@ -95,14 +95,23 @@ Configuração do agente: variáveis `AGENT_*` ou `--config <arquivo>` (o ambien
 
 ## Estado e pendências conhecidas
 
-- Entregue até a **v8.1** (agente nativo no Windows, servidor em Docker, reconexão AMQP). Depois da `v8.1.1` já estão em `main`, sem tag: o agente com o Npcap padrão, sem o modo WinPcap-compatível (PR #13), o reload do IoC por SIGHUP, canais extras de alerta, os pcaps de cobertura, o suporte a IPv6 no agente (B09) e os demais PRs até o #31 (PRs #14 a #31).
+- Entregue até a **v8.1** (agente nativo no Windows, servidor em Docker, reconexão AMQP). Depois da `v8.1.1` já estão em `main`, sem tag: o agente com o Npcap padrão, sem o modo WinPcap-compatível (PR #13), o reload do IoC por SIGHUP, canais extras de alerta, os pcaps de cobertura, o suporte a IPv6 no agente (B09), a classificação de IPv6 privado no servidor (B33, PR #35), VLAN/QinQ e fragmentação IPv4 no agente (B10, PR #36) e os demais PRs (PRs #14 a #36; o #32 é o redesenho dos dashboards).
 - Planejado: v9.0 (AF_PACKET/TPACKET_V3, zero-copy) e v10.0 (VPS, Terraform, Nginx, Let's Encrypt, cluster RabbitMQ).
 - `AMPLIFICATION` detecta um refletor DNS que só envia respostas quando o sensor vê a consulta forjada com origem fora de `HOME_NET` (o request é contado no IP de destino, numa tabela fixa de 64 servidores). Não detecta quando a vítima está em `HOME_NET` (gateway da vítima): o skip descarta a consulta. Com a mistura de consultas DNSSEC/ANY, um resolvedor pode disparar com algo entre 60 % e 70 % de consultas com resposta de ~1 KB (medido com pcap sintético: 60 % deu ratio acumulado 9,8, sem alerta; 70 % deu 11,2, com alerta; o limiar 10:1 é cruzado perto de 61 % por interpolação linear).
 - **Resolvido (B29, PR #28):** o `analyzer.c` usava `inet_ntoa`, que no Windows só funciona com o Winsock já inicializado. Agora usa `inet_ntop` com buffers locais `INET_ADDRSTRLEN` em ARP, ICMP, TCP, UDP e `report_addr` (`src/agent/analysis/analyzer.c`). Medido pelo orquestrador no Windows (Ryzen 7 7700X, MSYS2 UCRT64, Release): com `bench_pps` a 20 mil pps oferecidos o `rb_pkt` tinha 80,08 % de overflow, e a 200 mil pps, 96,05 %; depois da mudança, 0 % nos dois. A causa era `inet_ntoa` sem `WSAStartup` (~238 µs por chamada, micro-teste do agente do B29). O replay e o benchmark não abrem AMQP. O agente real com AMQP não tinha esse custo em regime: o rabbitmq-c chama `WSAStartup` ao abrir o socket (sonda do B29, ~0,01 a 0,3 µs), mas a proteção dependia desse efeito colateral.
 - **Pendências do IPv6 (B09, PR #31):**
   - Mais de 100 origens IPv6 distintas ativas ao mesmo tempo esgotam as vagas da família (`MAX_SUSPECTS` = 100, igual ao IPv4). Uma origem sem vaga fica sem nenhuma detecção IPv6 (não só do mesmo tipo): `find_or_create_suspect` devolve NULL e `analyze_packet` retorna 0. Decisão em aberto: agregar por /64, despejar por LRU ou ADR.
   - Não verificado em captura ao vivo com IPv6 real (nem auto-detecção de HOME_NET, publicação AMQP ou enriquecimento GeoIP/IoC com IPv6). A validação foi com pcaps sintéticos e replay.
-  - O servidor trata IPv6 privado como público: `is_private_ip` (em `nta_abuse.c`, `nta_geoip.c` e `nta_whois.c`) só reconhece prefixos IPv4, então `::1`, `fe80::/10` e `fc00::/7` iriam ao AbuseIPDB e ao WHOIS. A correção está em andamento no B33 (outro agente, branch `fix/server-ipv6-private`) e ainda não está em `main`.
+  - Resolvido no B33 (PR #35): o servidor classifica IPv6 privado com `nta_ip_is_private` (`include/server/nta_ipclass.h`, usado por `nta_abuse.c`, `nta_geoip.c` e `nta_whois.c`): `::`, `::1`, `fe80::/10`, `fc00::/7`, `ff00::/8`, `2001:db8::/32` e IPv4-mapeado.
+- **Pendências do VLAN e fragmentação (B10, PR #36):**
+  - Política: descarte e contagem, sem remontagem. A evasão por fragmentação continua aberta: um fragmento inicial com L4 menor que o cabeçalho exigido (menos de 20 bytes em TCP) é descartado e contado em `frag_discarded`; fragmentos não iniciais não chegam aos detectores, então ICMP Flood e SYN Flood podem ser subcontados quando o tráfego vem fragmentado.
+  - Mudança visível: tráfego com VLAN, antes ignorado, agora é analisado, e pode gerar alertas novos.
+  - `vlan_frames`, `frag_seen` e `frag_discarded` já são gravados em `pipeline_metrics` no InfluxDB (gravação genérica em `nta_influx.c`), mas os dashboards do Grafana ainda não os mostram.
+  - Verificado só com pcaps sintéticos; captura real com VLAN ou fragmentos não foi testada.
+- **Pendências anteriores ao B10, ainda não corrigidas:**
+  - `--replay` de arquivo único com gabarito vazio sai com rc=1 (`main.c`: `g && r.score < 80`, e `compare_results` retorna sem preencher o score). `--replay-dir` não é afetado.
+  - Padding de Ethernet pode entrar no L4 de datagrama IPv4 ou IPv6 não fragmentado, porque sem fragmento o L4 vai até o fim do quadro.
+  - TCP e UDP chamam `ntohs()` por pacote em `analyzer.c`; no MinGW essa chamada cai no ws2_32.
 - O `ROADMAP.MD` e o `README.md` foram alinhados ao código em 2026-11 (PR #16), mas podem restar divergências: em caso de dúvida, **o código vale**.
 
 ## Documentação detalhada
