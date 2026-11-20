@@ -1877,6 +1877,72 @@
         "showPercentChange": false,
         "orientation": "auto"
       }
+    },
+    {
+      "type": "timeseries",
+      "id": 21,
+      "title": "Quadros VLAN e fragmentos (taxa)",
+      "description": "Taxa somada de todos os agentes: quadros com tag 802.1Q/QinQ, fragmentos IPv4/IPv6 vistos e descartados. Derivada dos contadores do agente (zerados a cada reinício). Agentes antigos não enviam esses campos: sem linha.",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb-nta"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 24,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb-nta"
+          },
+          "query": "from(bucket: \"network_traffic\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"pipeline_metrics\" and (r._field == \"vlan_frames\" or r._field == \"frag_seen\" or r._field == \"frag_discarded\"))\n  |> derivative(unit: 1s, nonNegative: true)\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> group(columns: [\"_field\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: sum, createEmpty: false)\n  |> map(fn: (r) => ({r with _field: if r._field == \"vlan_frames\" then \"quadros VLAN/s\" else if r._field == \"frag_seen\" then \"fragmentos vistos/s\" else \"fragmentos descartados/s\"}))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 25,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "barAlignment": 0,
+            "axisSoftMin": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
     }
   ],
   "refresh": "10s",
