@@ -76,6 +76,51 @@ jobs:
           ctest --test-dir build --output-on-failure
           ./build/NetworkTrafficAnalyzer --replay-dir tests/pcaps/
 
+  # Fuzzing do parser (B06): libFuzzer + ASan/UBSan sobre frames Ethernet, com
+  # corpus inicial de tests/pcaps. Smoke curto e NÃO bloqueante (continue-on-error):
+  # um crash aparece como falha do job e o caso fica em artefato, para virar
+  # issue/PR separado. Não corrigir o analyzer neste job.
+  fuzz-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install dependencies (clang + libFuzzer)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y cmake clang pkg-config libpcap-dev
+          CLANG_VER=$(clang --version | grep -oE '[0-9]+' | head -1)
+          sudo apt-get install -y "libclang-rt-${CLANG_VER}-dev"
+          echo 'int main(void) { return 0; }' | \
+            clang -fsanitize=fuzzer,address,undefined -x c - -o /tmp/fuzz-probe
+          echo "libFuzzer disponível (clang ${CLANG_VER})"
+
+      - name: Build harness (libFuzzer + ASan + UBSan)
+        run: |
+          cmake -S tests/fuzz -B build-fuzz -DCMAKE_C_COMPILER=clang
+          cmake --build build-fuzz --target fuzz_parser --parallel
+
+      - name: Corpus inicial (frames dos pcaps)
+        run: python3 tests/fuzz/make_corpus.py tests/pcaps build-fuzz/corpus
+
+      - name: Fuzz smoke (120 s)
+        run: |
+          mkdir -p build-fuzz/artifacts
+          ./build-fuzz/fuzz_parser build-fuzz/corpus \
+            -max_total_time=120 -max_len=4096 -timeout=10 \
+            -artifact_prefix=build-fuzz/artifacts/
+
+      - name: Upload crashes
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-parser-artifacts
+          path: build-fuzz/artifacts/
+          if-no-files-found: ignore
+
   server-image:
     runs-on: ubuntu-latest
     steps:
