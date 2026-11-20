@@ -9,6 +9,7 @@ publica o IP reivindicado na resposta ARP (192.168.1.1), não o IP do atacante.
 Uso:  python3 tests/pcaps/gen_pcaps.py   (sobrescreve os .pcap deste diretório)
 """
 import hashlib
+import socket
 import struct
 from pathlib import Path
 
@@ -23,7 +24,15 @@ ATTACKER_MAC = bytes([0x02, 0x42, 0xAC, 0x11, 0x00, 0x64])
 BROADCAST_MAC = b"\xff" * 6
 BASE_TS = 1700000000  # timestamp fixo -> pcaps idênticos a cada geração
 
-TCP_FIN, TCP_SYN, TCP_PSH, TCP_URG = 0x01, 0x02, 0x08, 0x20
+# IPv6 (B09): endereços de documentação (RFC 3849), 16 bytes cada.
+V6_ATTACKER = socket.inet_pton(socket.AF_INET6, "2001:db8:a::100")
+V6_VICTIM = socket.inet_pton(socket.AF_INET6, "2001:db8:1::10")
+V6_CLIENT = socket.inet_pton(socket.AF_INET6, "2001:db8:4::20")
+V6_SERVER = socket.inet_pton(socket.AF_INET6, "2001:db8:2::9")
+V6_RESOLVER = socket.inet_pton(socket.AF_INET6, "2001:db8:53::1")
+V6_REFLECTOR = socket.inet_pton(socket.AF_INET6, "2001:db8:3::53")
+
+TCP_FIN, TCP_SYN, TCP_PSH, TCP_URG, TCP_ACK = 0x01, 0x02, 0x08, 0x20, 0x10
 
 
 def checksum(data: bytes) -> int:
@@ -82,6 +91,60 @@ def arp_reply(sender_mac: bytes, sender_ip: bytes, target_ip: bytes) -> bytes:
     arp += b"\0" * 6 + target_ip
     eth = BROADCAST_MAC + sender_mac + b"\x08\x06"
     return eth + arp
+
+
+def l4_checksum6(src: bytes, dst: bytes, proto: int, seg: bytes) -> int:
+    """Checksum de camada 4 sobre IPv6 (pseudo-cabeçalho do RFC 8200)."""
+    pseudo = src + dst + struct.pack("!I3xB", len(seg), proto)
+    return checksum(pseudo + seg)
+
+
+def ipv6_l4(src: bytes, dst: bytes, proto: int, seg: bytes, cksum_off: int) -> bytes:
+    """Preenche o checksum do segmento L4 (o analyzer não verifica; aqui é
+    só para o pcap ser um IPv6 válido para outras ferramentas)."""
+    seg = seg[:cksum_off] + b"\0\0" + seg[cksum_off + 2:]
+    c = l4_checksum6(src, dst, proto, seg)
+    return seg[:cksum_off] + struct.pack("!H", c) + seg[cksum_off + 2:]
+
+
+def ipv6(next_hdr: int, body: bytes, src: bytes, dst: bytes) -> bytes:
+    """Quadro Ethernet + IPv6 (40 bytes) + `body` (extensões e L4). `next_hdr`
+    é o primeiro cabeçalho depois do fixo (extensão, se houver)."""
+    hdr = struct.pack("!IHBB", 0x60000000, len(body), next_hdr, 64) + src + dst
+    eth = b"\x00\x11\x22\x33\x44\x55" + b"\x66\x77\x88\x99\xaa\xbb" + b"\x86\xdd"
+    return eth + hdr + body
+
+
+def hbh(next_hdr: int) -> bytes:
+    """Cabeçalho de extensão Hop-by-Hop de 8 bytes (PadN)."""
+    return struct.pack("!BB", next_hdr, 0) + b"\x01\x04\0\0\0\0"
+
+
+def frag(next_hdr: int, offset_units: int) -> bytes:
+    """Fragment header de 8 bytes; offset em unidades de 8 bytes; M = 0."""
+    return struct.pack("!BBHI", next_hdr, 0, offset_units << 3, 0x1234)
+
+
+def tcp6(sport: int, dport: int, flags: int, src: bytes = V6_ATTACKER,
+         dst: bytes = V6_VICTIM) -> bytes:
+    seg = struct.pack("!HHIIBBHHH", sport, dport, 0, 0, 5 << 4, flags, 1024, 0, 0)
+    return ipv6(6, ipv6_l4(src, dst, 6, seg, 16), src, dst)
+
+
+def icmp6_echo(seq: int, src: bytes = V6_ATTACKER, dst: bytes = V6_VICTIM,
+               kind: int = 128) -> bytes:
+    """ICMPv6 echo request (128) ou reply (129)."""
+    body = struct.pack("!BBHHH", kind, 0, 0, 0x1234, seq)
+    return ipv6(58, ipv6_l4(src, dst, 58, body, 2), src, dst)
+
+
+def udp6(sport: int, dport: int, payload: bytes, src: bytes, dst: bytes) -> bytes:
+    seg = struct.pack("!HHHH", sport, dport, 8 + len(payload), 0) + payload
+    return ipv6(17, ipv6_l4(src, dst, 17, seg, 6), src, dst)
+
+
+def dns6_query(sport: int, qid: int, name: str) -> bytes:
+    return udp6(sport, 53, dns_msg(qid, 0x0100, name), V6_ATTACKER, V6_RESOLVER)
 
 
 def write_pcap(name: str, packets, interval: float) -> None:
@@ -175,6 +238,87 @@ def main() -> None:
         dns_1byte,
         (dns_1byte[:38], len(dns_1byte)),                    # UDP cortado
     ], 0.1)
+
+    # ---------------------------------------------------------------------
+    # IPv6 (B09). Mesmos volumes dos pcaps IPv4 correspondentes; o atacante é
+    # 2001:db8:a::100 e o gabarito usa o texto canônico (inet_ntop).
+    # ---------------------------------------------------------------------
+    write_pcap("ipv6-syn-flood.pcap",
+               [tcp6(40000 + i, 80, TCP_SYN) for i in range(150)], 0.01)
+    write_pcap("ipv6-port-scan.pcap",
+               [tcp6(40000, 1000 + i, TCP_SYN) for i in range(20)], 0.05)
+    write_pcap("ipv6-null-scan.pcap",
+               [tcp6(40000, 1000 + i, 0) for i in range(5)], 0.1)
+    write_pcap("ipv6-xmas-scan.pcap",
+               [tcp6(40000, 1000 + i, TCP_FIN | TCP_PSH | TCP_URG) for i in range(20)], 0.05)
+    write_pcap("ipv6-synfin-scan.pcap",
+               [tcp6(40000, 1000 + i, TCP_SYN | TCP_FIN) for i in range(20)], 0.05)
+    write_pcap("ipv6-brute-force.pcap",
+               [tcp6(40000 + i, 22, TCP_SYN) for i in range(40)], 0.5)
+    write_pcap("ipv6-icmp-flood.pcap", [icmp6_echo(i) for i in range(50)], 0.01)
+    write_pcap("ipv6-dns-tunnel.pcap",
+               [dns6_query(50000 + i, i, hashlib.sha256(str(i).encode()).hexdigest()[:60]
+                           + ".exfil.example")
+                for i in range(20)], 0.2)
+
+    # Refletor DNS puro sobre IPv6: a vítima 2001:db8:1::10 envia consultas com
+    # origem forjada para o refletor 2001:db8:3::53, que só responde. O alerta
+    # sai pelo refletor, como no IPv4.
+    v6refl = [udp6(40000 + i, 53, dns_msg(i, 0x0100, "example.com"), V6_VICTIM, V6_REFLECTOR)
+              for i in range(3)]
+    v6refl += [udp6(53, 40000 + i, dns_msg(i, 0x8180, "example.com", b"A" * 200),
+                    V6_REFLECTOR, V6_VICTIM)
+               for i in range(10)]
+    write_pcap("ipv6-amplification-reflector.pcap", v6refl, 0.1)
+
+    # Benigno (falso positivo): cliente 2001:db8:4::20 com ACK para uma porta só,
+    # DNS proporcional, algumas respostas de echo e poucas requisições de echo
+    # (abaixo do limiar de ICMP_FLOOD). Gabarito vazio.
+    v6benign = [tcp6(40000 + (i % 5), 443, TCP_ACK, src=V6_CLIENT, dst=V6_SERVER)
+                for i in range(100)]
+    for i in range(20):
+        v6benign.append(udp6(40000 + i, 53, dns_msg(i, 0x0100, "www.example.com"),
+                             V6_CLIENT, V6_RESOLVER))
+        v6benign.append(udp6(53, 40000 + i, dns_msg(i, 0x8180, "www.example.com", b"x" * 40),
+                             V6_RESOLVER, V6_CLIENT))
+    v6benign += [icmp6_echo(i, src=V6_CLIENT, dst=V6_SERVER, kind=129) for i in range(30)]
+    v6benign += [icmp6_echo(i, src=V6_CLIENT, dst=V6_SERVER) for i in range(5)]
+    write_pcap("ipv6-benign.pcap", v6benign, 0.2)
+
+    # Malformados IPv6 (gabarito vazio; roda sob ASan/UBSan no CI). Nenhum pode
+    # ler fora do quadro nem gerar detecção: os três nulos do fragmento não
+    # inicial e da cadeia de 9 extensões provariam a leitura se fossem aceitos.
+    v6full = tcp6(40000, 80, 0)                              # null scan, 74 bytes
+    v6_ver4 = bytearray(v6full); v6_ver4[14] = 0x40          # versão 4 com EtherType 6
+    v6_hbh_big = bytearray(v6full); v6_hbh_big[20] = 0       # next = Hop-by-Hop
+    v6_hbh_big[54] = 6; v6_hbh_big[55] = 255                 # ext de 2048 bytes
+    tcp_seg = tcp6(40000, 80, 0)[54:]                        # segmento TCP sem IPv6
+    # 9 extensões Hop-by-Hop (o limite é 8); a última aponta para TCP null.
+    chain_pkt = ipv6(0, b"".join(hbh(0) for _ in range(8)) + hbh(6) + tcp_seg,
+                     V6_ATTACKER, V6_VICTIM)
+    # Fragmento não inicial (offset 1 = 8 bytes): sem L4, não pode ser analisado.
+    frag_n = [ipv6(44, frag(6, 1) + tcp6(40000, 1000 + i, 0)[54:], V6_ATTACKER, V6_VICTIM)
+              for i in range(3)]
+    esp = [ipv6(50, b"\x00" * 20, V6_ATTACKER, V6_VICTIM) for _ in range(3)]
+    write_pcap("ipv6-malformed.pcap", [
+        (v6full[:20], len(v6full)),                          # IPv6 cortado pelo snaplen
+        (v6full[:50], len(v6full)),                          # cabeçalho fixo incompleto
+        bytes(v6_ver4), bytes(v6_ver4),
+        bytes(v6_hbh_big), bytes(v6_hbh_big),
+        chain_pkt, chain_pkt, chain_pkt,
+        *frag_n,
+        *esp,
+        (v6full[:60], len(v6full)),                          # TCP cortado
+    ], 0.1)
+
+    # Exaustão por origens IPv6 (B09): 110 origens IPv6 distintas, cada uma com
+    # um SYN, consomem a tabela IPv6 e não a IPv4. Depois, 192.168.1.100 faz port
+    # scan: tem que continuar detectado (gabarito PORT_SCAN em IPv4).
+    v6exh = [tcp6(40000, 80, TCP_SYN,
+                  src=socket.inet_pton(socket.AF_INET6, f"2001:db8:b::{i + 1:x}"))
+             for i in range(110)]
+    v6exh += [tcp(40000, 1000 + i, TCP_SYN) for i in range(30)]
+    write_pcap("ipv6-exaustao.pcap", v6exh, 0.05)
 
 
 if __name__ == "__main__":
