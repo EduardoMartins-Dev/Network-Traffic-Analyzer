@@ -4,6 +4,10 @@
  *  Mapeamento fixo: ECS 8.11.0 (JSON) e CEF v0 com cabeçalho versão "1.0".   *
  *  Sem OCSF nesta entrega (ver PR).                                         *
  *                                                                           *
+ *  Alerta = attack_type não vazio e diferente de "NONE" (comparação exata).  *
+ *  O agente grava attack_type "NONE" em TODO pacote benigno (publish_packet  *
+ *  com attack NULL, ver publisher.c); esses pacotes não são exportados.     *
+ *                                                                           *
  *  Fluxo: traffic_handler → nta_export_submit (copia o JSON do alerta para   *
  *  uma fila limitada) → thread export_main (parse, render, send). O consumer *
  *  nunca espera rede. Fila cheia → descarte contado.                        *
@@ -140,6 +144,12 @@ static const char *json_str(const cJSON *obj, const char *key, const char *fb) {
 static double json_num(const cJSON *obj, const char *key, double fb) {
     const cJSON *v = cJSON_GetObjectItemCaseSensitive(obj, key);
     return cJSON_IsNumber(v) ? v->valuedouble : fb;
+}
+
+/* Regra de alerta (única, usada em submit e render): attack_type não vazio e
+ * diferente de "NONE". "NONE" é o valor gravado pelo agente em pacote benigno. */
+static int attack_is_alerta(const char *a) {
+    return a && *a && strcmp(a, "NONE") != 0;
 }
 
 static int is_ip_literal(const char *s) {
@@ -298,7 +308,7 @@ size_t nta_export_render(char *out, size_t cap, NtaExportFormat fmt,
     if (!out || cap < 2 || !ts || !evt || !cJSON_IsObject(evt)) return 0;
 
     const char *attack = json_str(evt, "attack_type", NULL);
-    if (!attack || !*attack) return 0;
+    if (!attack_is_alerta(attack)) return 0;
     double kc = json_num(evt, "kc_score", 0);
 
     char host[256], msgid[33];
@@ -570,8 +580,8 @@ fail_alloc:
 
 void nta_export_submit(NtaExport *e, const cJSON *evt, const char *agent_id) {
     if (!e || !evt || !cJSON_IsObject(evt)) return;
-    const cJSON *a = cJSON_GetObjectItemCaseSensitive(evt, "attack_type");
-    if (!cJSON_IsString(a) || !a->valuestring || !*a->valuestring) return;
+    const char *a = json_str(evt, "attack_type", NULL);
+    if (!attack_is_alerta(a)) return;
 
     /* Checagem barata antes de serializar: fila cheia descarta sem custo. */
     pthread_mutex_lock(&e->mu);

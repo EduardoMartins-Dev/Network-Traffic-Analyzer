@@ -8,8 +8,9 @@
  * Exportação de alertas para SIEM (B11).                                    *
  *                                                                           *
  * Opt-in: NTA_EXPORT_FORMAT vazio (padrão) = desligado, sem thread e sem     *
- * custo no caminho do consumer. Só eventos com attack_type não vazio (alertas)*
- * são exportados. Payload: CEF (v0) ou JSON ECS 8.11.0, dentro de uma linha  *
+ * custo no caminho do consumer. Só alertas são exportados: attack_type não    *
+ * vazio e diferente de "NONE" (o agente grava "NONE" em todo pacote benigno).*
+ * Payload: CEF (v0) ou JSON ECS 8.11.0, dentro de uma linha                  *
  * syslog RFC 5424 enviada por UDP (RFC 5426) ou TCP (octet-counting, RFC 6587).*
  *                                                                           *
  * Desacoplamento: o consumer só copia o evento para uma fila limitada        *
@@ -47,7 +48,7 @@ void nta_export_cfg_load(NtaExportCfg *cfg);
  * desligado ou mal configurado (o servidor segue normalmente). */
 NtaExport *nta_export_open(const NtaExportCfg *cfg);
 
-/* Enfileira o evento se for alerta. NULL ou evento sem attack_type: retorna
+/* Enfileira o evento se for alerta (regra acima). NULL, benigno ou sem alerta: retorna
  * sem fazer nada. Não bloqueia em I/O. */
 void nta_export_submit(NtaExport *e, const cJSON *evt, const char *agent_id);
 

@@ -12,7 +12,9 @@
  *   7. configuração por env: desligado = nada; formato inválido; porta fora da faixa;
  *   8. envio UDP real em loopback: a linha chega bem formada, alerta normal não sai;
  *   9. destino fechado: submit não bloqueia e a contabilidade fecha (enviados +
- *      descartados + falhas = submetidos). Nenhum tráfego sai para fora da máquina. */
+ *      descartados + falhas = submetidos). Nenhum tráfego sai para fora da máquina;
+ *  10. pacote benigno do agente (attack_type "NONE") não é exportado; mistura
+ *      benigno + alerta envia só o alerta. */
 #include "test.h"
 #include "nta_export.h"
 
@@ -27,6 +29,8 @@
 
 #define TS  "2026-11-20T10:00:00.000Z"
 #define OUT_CAP 4096
+
+static int escuta_udp(int *porta);
 
 static int contem(const char *h, const char *n) { return strstr(h, n) != NULL; }
 
@@ -53,6 +57,22 @@ static cJSON *alerta_ref(void) {
     cJSON_AddStringToObject(e, "kill_chain_stage", "EXPLOIT");
     cJSON_AddNumberToObject(e, "kc_score", 85);
     cJSON_AddStringToObject(e, "mitre", "T1110");
+    return e;
+}
+
+/* Evento benigno exatamente como o agente publica (publish_packet com attack
+ * NULL → publisher grava NONE/IDLE). Não é alerta: não pode ser exportado. */
+static cJSON *evento_benigno(void) {
+    cJSON *e = cJSON_CreateObject();
+    cJSON_AddStringToObject(e, "src_ip", "10.0.0.5");
+    cJSON_AddNumberToObject(e, "port", 53);
+    cJSON_AddStringToObject(e, "proto", "UDP");
+    cJSON_AddNumberToObject(e, "bytes", 512);
+    cJSON_AddNumberToObject(e, "is_scan", 0);
+    cJSON_AddStringToObject(e, "attack_type", "NONE");
+    cJSON_AddStringToObject(e, "kill_chain_stage", "IDLE");
+    cJSON_AddNumberToObject(e, "kc_score", 0);
+    cJSON_AddStringToObject(e, "mitre", "");
     return e;
 }
 
@@ -212,6 +232,71 @@ static void test_render_rejeita(void) {
     CHECK(nta_export_render(out, 40, NTA_EXPORT_CEF, "h", e, "a", TS) == 0);
     CHECK(nta_export_render(out, 40, NTA_EXPORT_ECS, "h", e, "a", TS) == 0);
     cJSON_Delete(e);
+}
+
+/* Pacote benigno do agente (attack_type "NONE") não vira alerta: render 0 nos
+ * dois formatos. Alerta real com "NONE" fora de attack_type continua válido. */
+static void test_benigno_nao_renderiza(void) {
+    char out[OUT_CAP];
+    cJSON *b = evento_benigno();
+    CHECK(nta_export_render(out, sizeof out, NTA_EXPORT_CEF, "h", b, "a", TS) == 0);
+    CHECK(nta_export_render(out, sizeof out, NTA_EXPORT_ECS, "h", b, "a", TS) == 0);
+    cJSON_Delete(b);
+
+    /* Comparação exata: "none" minúsculo e "NONE " com espaço são alertas. */
+    cJSON *a = alerta_ref();
+    cJSON_ReplaceItemInObject(a, "attack_type", cJSON_CreateString("none"));
+    CHECK(nta_export_render(out, sizeof out, NTA_EXPORT_CEF, "h", a, "a", TS) > 0);
+    cJSON_Delete(a);
+}
+
+/* 200 pacotes benignos + 1 alerta PORT_SCAN no mesmo destino UDP: só o alerta
+ * chega (um datagrama), e a contabilidade mostra 1 enviado e nada mais. */
+static void test_mistura_benigno_alerta(void) {
+    int porta = 0;
+    int rx = escuta_udp(&porta);
+    CHECK(rx >= 0 && porta > 0);
+    struct timeval curto = { 0, 300000 };
+    setsockopt(rx, SOL_SOCKET, SO_RCVTIMEO, &curto, sizeof curto);
+
+    NtaExportCfg cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.format      = NTA_EXPORT_ECS;
+    cfg.syslog_host = "127.0.0.1";
+    cfg.syslog_port = porta;
+    cfg.hostname    = "host-test";
+    cfg.queue_max   = 512;
+    cfg.timeout_ms  = 500;
+    NtaExport *e = nta_export_open(&cfg);
+    CHECK(e != NULL);
+
+    cJSON *benigno = evento_benigno();
+    for (int i = 0; i < 200; i++) nta_export_submit(e, benigno, "agent-01");
+    cJSON *alerta = alerta_ref();
+    cJSON_ReplaceItemInObject(alerta, "attack_type", cJSON_CreateString("PORT_SCAN"));
+    cJSON_ReplaceItemInObject(alerta, "kc_score", cJSON_CreateNumber(60));
+    nta_export_submit(e, alerta, "agent-01");
+
+    char buf[OUT_CAP];
+    ssize_t n = recv(rx, buf, sizeof buf - 1, 0);
+    CHECK(n > 0);
+    if (n > 0) {
+        buf[n] = '\0';
+        CHECK(contem(buf, " - PORT_SCAN - {"));
+        CHECK(!contem(buf, "NONE"));
+    }
+    /* Nenhum segundo datagrama: os 200 benignos nunca entraram na fila. */
+    CHECK(recv(rx, buf, sizeof buf, 0) < 0);
+
+    NtaExportStats st;
+    nta_export_close(e, &st);
+    CHECK(st.sent == 1);
+    CHECK(st.dropped == 0);
+    CHECK(st.failed == 0);
+
+    cJSON_Delete(benigno);
+    cJSON_Delete(alerta);
+    close(rx);
 }
 
 static void test_timestamp(void) {
@@ -381,6 +466,8 @@ int main(void) {
     RUN(test_ecs_entrada_hostil);
     RUN(test_cabecalho_sanitizado);
     RUN(test_render_rejeita);
+    RUN(test_benigno_nao_renderiza);
+    RUN(test_mistura_benigno_alerta);
     RUN(test_timestamp);
     RUN(test_config_env);
     RUN(test_udp_entrega);
