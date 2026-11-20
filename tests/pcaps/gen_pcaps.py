@@ -147,6 +147,31 @@ def dns6_query(sport: int, qid: int, name: str) -> bytes:
     return udp6(sport, 53, dns_msg(qid, 0x0100, name), V6_ATTACKER, V6_RESOLVER)
 
 
+ETH_HDR = b"\x00\x11\x22\x33\x44\x55" + b"\x66\x77\x88\x99\xaa\xbb"
+
+
+def tcp_bytes(sport: int, dport: int, flags: int) -> bytes:
+    """Segmento TCP de 20 bytes (sem checksum útil: o analyzer não verifica)."""
+    return struct.pack("!HHIIBBHHH", sport, dport, 0, 0, 5 << 4, flags, 1024, 0, 0)
+
+
+def tagged(frame: bytes, *tags) -> bytes:
+    """Insere tags VLAN depois dos MACs. `tags` = (TPID, TCI), a externa primeiro:
+    (0x88A8, tci) + (0x8100, tci) é QinQ. O EtherType original segue as tags."""
+    return frame[:12] + b"".join(struct.pack("!HH", t, c) for t, c in tags) + frame[12:]
+
+
+def ipv4_frag(proto: int, payload: bytes, offset_units: int, mf: int, ident: int,
+              pad: bytes = b"", src: bytes = ATTACKER, dst: bytes = VICTIM) -> bytes:
+    """Fragmento IPv4: tot_len = 20 + len(payload), como o emissor grava. `pad` são
+    bytes depois do datagrama (padding de Ethernet até 60 bytes): não fazem parte
+    do IP e não podem ser lidos como L4."""
+    hdr = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20 + len(payload), ident,
+                      (mf << 13) | offset_units, 64, proto, 0, src, dst)
+    hdr = hdr[:10] + struct.pack("!H", checksum(hdr)) + hdr[12:]
+    return ETH_HDR + b"\x08\x00" + hdr + payload + pad
+
+
 def write_pcap(name: str, packets, interval: float) -> None:
     """packets: bytes, ou (bytes_capturados, tamanho_original) para simular
     captura com snaplen curto (incl_len < orig_len)."""
@@ -319,6 +344,49 @@ def main() -> None:
              for i in range(110)]
     v6exh += [tcp(40000, 1000 + i, TCP_SYN) for i in range(30)]
     write_pcap("ipv6-exaustao.pcap", v6exh, 0.05)
+
+    # ---------------------------------------------------------------------
+    # B10: 802.1Q / QinQ, fragmentação IPv4 e tags VLAN malformadas.
+    # Os pcaps com VLAN repetem os sem tag: mesmo atacante, mesmo gabarito.
+    # ---------------------------------------------------------------------
+    write_pcap("vlan-port-scan.pcap",
+               [tagged(tcp(40000, 1000 + i, TCP_SYN), (0x8100, 100)) for i in range(20)], 0.05)
+    write_pcap("qinq-syn-flood.pcap",
+               [tagged(tcp(40000 + i, 80, TCP_SYN), (0x88A8, 200), (0x8100, 10))
+                for i in range(150)], 0.01)
+    write_pcap("vlan-arp-spoof.pcap", [tagged(p, (0x8100, 5)) for p in arp], 0.5)
+
+    # VLAN malformada (gabarito vazio; roda sob ASan/UBSan no CI): tag cortada pelo
+    # snaplen, quadro que termina no TPID, QinQ cortada no meio da segunda tag, e
+    # pilha de 5 tags (o limite é 4). Os nulos da pilha de 5 provariam a leitura.
+    deep = tagged(tcp(40000, 80, 0), *[(0x8100, i) for i in range(5)])
+    write_pcap("vlan-malformado.pcap", [
+        (ETH_HDR + b"\x81\x00\x00", 60),                      # tag cortada no TCI
+        (ETH_HDR + b"\x81\x00", 14),                          # TPID e nada depois
+        (ETH_HDR + b"\x88\xa8\x00\x0a\x81\x00\x00", 60),      # QinQ cortada na 2ª tag
+        (deep[:20], len(deep)),                               # pilha cortada pelo snaplen
+        deep, deep, deep,                                     # 5 tags: acima do limite
+    ], 0.1)
+
+    # Fragmentos não iniciais (offset != 0) com bytes que parecem um cabeçalho TCP
+    # SYN (gabarito vazio). O parser de main lia esses bytes como L4: reprodução.
+    write_pcap("frag-ipv4-nao-inicial.pcap",
+               [ipv4_frag(6, tcp_bytes(40000, 1000 + i, TCP_SYN), 1 + i, i % 2, 0x4000 + i)
+                for i in range(30)], 0.05)
+
+    # Fragmentos iniciais (offset 0, MF=1) com o cabeçalho TCP inteiro: são
+    # analisados normalmente (gabarito PORT_SCAN).
+    write_pcap("frag-ipv4-inicial.pcap",
+               [ipv4_frag(6, tcp_bytes(40000, 1000 + i, TCP_SYN), 0, 1, 0x5000 + i)
+                for i in range(20)], 0.05)
+
+    # Tiny fragment: o primeiro fragmento tem 8 bytes de L4 (portas e seq). O byte
+    # de flags (L4[13]) cai no padding de Ethernet depois do datagrama (quadro de
+    # 60 bytes) e vale SYN. Não pode contar (gabarito vazio).
+    pad_syn = b"\x00" * 5 + b"\x02" + b"\x00" * 12           # 18 bytes; SYN no índice 5
+    write_pcap("frag-ipv4-tiny.pcap",
+               [ipv4_frag(6, struct.pack("!HHI", 40000, 1000 + i, 0), 0, 1, 0x6000 + i,
+                          pad=pad_syn) for i in range(20)], 0.05)
 
 
 if __name__ == "__main__":

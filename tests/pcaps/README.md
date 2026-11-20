@@ -44,8 +44,29 @@ Cada arquivo `.pcap` deve ter um gabarito `.json` com o mesmo nome:
 | ipv6-exaustao.pcap | ipv6-exaustao.json  | PORT_SCAN      | 192.168.1.100 (IPv4) |
 | ipv6-benign.pcap   | ipv6-benign.json    | (nenhum)       | vazio: 0 alertas   |
 | ipv6-malformed.pcap | ipv6-malformed.json | (nenhum)      | vazio: 0 alertas   |
+| vlan-port-scan.pcap | vlan-port-scan.json | PORT_SCAN     | 192.168.1.100      |
+| qinq-syn-flood.pcap | qinq-syn-flood.json | SYN_FLOOD     | 192.168.1.100      |
+| vlan-arp-spoof.pcap | vlan-arp-spoof.json | ARP_SPOOF     | 192.168.1.1        |
+| vlan-malformado.pcap | vlan-malformado.json | (nenhum)    | vazio: 0 alertas   |
+| frag-ipv4-inicial.pcap | frag-ipv4-inicial.json | PORT_SCAN | 192.168.1.100    |
+| frag-ipv4-nao-inicial.pcap | frag-ipv4-nao-inicial.json | (nenhum) | vazio: 0 alertas |
+| frag-ipv4-tiny.pcap | frag-ipv4-tiny.json | (nenhum)      | vazio: 0 alertas   |
 
 Notas sobre os gabaritos novos:
+- **VLAN e QinQ (B10)**: `vlan-port-scan`, `qinq-syn-flood` e `vlan-arp-spoof`
+  repetem os pcaps sem tag, com uma tag 802.1Q (0x8100) ou uma pilha QinQ
+  (0x88A8 + 0x8100). Gabarito igual ao do pcap sem tag. `vlan-malformado` tem
+  tag cortada pelo snaplen, QinQ cortada no meio e pilha de 5 tags (o limite é
+  4). Nenhum pode alertar nem ler além do quadro.
+- **Fragmentos IPv4 (B10)**: `frag-ipv4-nao-inicial` tem 30 fragmentos com
+  offset != 0 cujo começo parece um TCP SYN com portas distintas. Não podem
+  gerar alerta (o binário anterior ao B10 gerava 16 PORT_SCAN). `frag-ipv4-tiny`
+  tem o primeiro fragmento com 8 bytes de L4 e o flag SYN no padding de Ethernet
+  depois do datagrama (o binário anterior gerava 6 PORT_SCAN). `frag-ipv4-inicial`
+  tem fragmentos com offset 0 e MF=1 e o cabeçalho TCP inteiro: são analisados
+  (gabarito PORT_SCAN).
+- **ARP_SPOOF**: o `src_ip` é o IP **reivindicado** na resposta ARP divergente
+  (192.168.1.1, o gateway), que é o que o analyzer publica. A detecção ignora
 - **ARP_SPOOF**: o `src_ip` é o IP **reivindicado** na resposta ARP divergente
   (192.168.1.1, o gateway), que é o que o analyzer publica. A detecção ignora
   HOME_NET.
