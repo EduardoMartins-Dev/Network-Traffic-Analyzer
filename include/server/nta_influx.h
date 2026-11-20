@@ -36,7 +36,7 @@ int  nta_influx_write_traffic(NtaInflux *inf, NtaGeo *geo, NtaIoc *ioc,
 
 /* Parse JSON (objeto único) em `body` e escreve como measurement
  * "pipeline_metrics". Cada chave numérica vira um field. `agent_id` vira tag.
- * Mantém paridade com data_ingestor.py._on_metrics. Retorna 0 em sucesso. */
+ * Retorna 0 em sucesso. */
 int  nta_influx_write_metrics(NtaInflux *inf,
                               const char *body, size_t len,
                               const char *agent_id);

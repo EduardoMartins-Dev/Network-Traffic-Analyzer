@@ -5,8 +5,8 @@
 
 /* -------------------------------------------------------------------------- *
  * Configuração do nta-server — carregada via env vars no startup.           *
- * Mesmas vars do data_ingestor.py (compat) + NTA_WORKERS / NARRATOR_QUEUE / *
- * GEOIP_DB_PATH (novas na v7.0).                                            *
+ * Nomes de vars herdados do antigo ingestor Python (compat) + NTA_WORKERS / *
+ * NARRATOR_QUEUE / GEOIP_DB_PATH (novas na v7.0).                           *
  * -------------------------------------------------------------------------- */
 typedef struct {
     /* InfluxDB */
@@ -47,7 +47,7 @@ static inline int nta_should_stop(void) {
     return atomic_load_explicit(&g_nta_stop, memory_order_relaxed);
 }
 
-/* Carrega env vars. Aplica defaults compatíveis com o data_ingestor.py. */
+/* Carrega env vars com defaults (nomes herdados do antigo ingestor Python). */
 void nta_config_load(NtaConfig *cfg);
 
 /* Imprime a config (mascarando token) — útil pra debug de deploy. */

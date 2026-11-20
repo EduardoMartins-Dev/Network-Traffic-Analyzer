@@ -32,8 +32,9 @@ NtaGeo *nta_geo_open(const char *city_db_path, const char *asn_db_path);
  * teve hit (out->has_geo || out->has_asn). 0 se IP é privado, vazio, ou
  * nenhum banco tem o IP. Sempre zera `out` antes de preencher.
  *
- * Lista de privados igual ao data_ingestor.py: 127., 192.168., 10., 172.
- * (mesmas limitações conhecidas — paridade de schema). */
+ * IP privado/não roteável retorna 0 sem consultar os bancos. A classificação
+ * é nta_ip_is_private() (nta_ipclass.h). IPv4 casa por prefixo de string
+ * (127., 192.168., 10., 172.): qualquer 172.x conta como privado. */
 int  nta_geo_lookup(NtaGeo *g, const char *ip, NtaGeoResult *out);
 
 void nta_geo_close(NtaGeo *g);

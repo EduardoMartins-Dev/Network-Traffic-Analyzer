@@ -1,13 +1,12 @@
 /* ========================================================================= *
  *  nta_influx.c — writer InfluxDB v2 via libcurl (line protocol).           *
  *                                                                           *
- *  Schema mantido idêntico ao data_ingestor.py (paridade p/ diff da etapa   *
- *  11):                                                                     *
- *    measurement: "traffic"                                                 *
+ *  Schema do measurement "traffic", escrito por nta_influx_write_traffic:   *
  *    tags   (sempre): agent_id, src_ip, protocol                            *
- *    tags   (opt)   : attack_type, kill_chain_stage, mitre                  *
+ *    tags   (opt)   : attack_type, kill_chain_stage, mitre, ioc_hit,        *
+ *                     ioc_source, asn, asn_org                              *
  *    fields (sempre): port (int), bytes (float), is_scan (float)            *
- *    fields (opt)   : kc_score (float), lat (float), lon (float)            *
+ *    fields (opt)   : kc_score, abuse_score, lat, lon (float)               *
  *                                                                           *
  *  Escape helpers internos — não puxamos lib externa. Tag keys/values e    *
  *  field keys precisam escapar vírgula, espaço e '='. String fields (não  *
@@ -200,8 +199,7 @@ static int build_traffic_point(char *out, size_t cap,
         w += n;
     }
 
-    /* lat/lon — fields (não tags), paridade com data_ingestor.py. Reusa o
-     * lookup já feito acima (gr). */
+    /* lat/lon como fields (não tags). Reusa o lookup já feito acima (gr). */
     if (gr.has_geo) {
         n = snprintf(out + w, cap - w, ",lat=%.6f,lon=%.6f", gr.lat, gr.lon);
         if (n <= 0 || (size_t)n >= cap - w) return 0;
@@ -349,7 +347,7 @@ int nta_influx_write_traffic(NtaInflux *inf, NtaGeo *geo, NtaIoc *ioc,
 
 /* -------------------------------------------------------------------------- *
  * Write metrics — measurement "pipeline_metrics".                           *
- * Schema espelha data_ingestor.py._on_metrics:                              *
+ * Schema:                                                                   *
  *   tags  : agent_id                                                         *
  *   fields: cada chave numérica do JSON (rb_pkt_depth, eps, etc) como float *
  * -------------------------------------------------------------------------- */

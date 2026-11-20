@@ -97,8 +97,8 @@ int nta_amqp_open(NtaAmqp *a, const NtaConfig *cfg,
         return -1;
     }
 
-    /* durable=1: fila sobrevive a restart do broker. Mesma flag usada no
-     * agente (publisher.c) e no data_ingestor.py. */
+    /* durable=1: fila sobrevive a restart do broker. O agente declara as
+     * filas com a mesma flag (src/agent/output/publisher.c). */
     amqp_queue_declare(a->conn, a->channel, amqp_cstring_bytes(queue),
                        0, 1, 0, 0, amqp_empty_table);
     if (!amqp_reply_ok(amqp_get_rpc_reply(a->conn), "queue_declare")) {
@@ -145,9 +145,9 @@ int nta_amqp_consume_loop(NtaAmqp *a, const char *queue,
                            atomic_int *worker_stop) {
     if (!a->connected) return -1;
 
-    /* auto_ack=1 mantém paridade com data_ingestor.py. Tradeoff: mensagens
-     * podem ser perdidas se o worker crashar durante handler, mas mantém
-     * throughput alto e lógica simples. */
+    /* auto_ack=1 (no_ack): o broker considera a mensagem entregue ao enviá-la,
+     * sem ack manual. Tradeoff: mensagens podem ser perdidas se o worker
+     * crashar durante handler, mas mantém throughput alto e lógica simples. */
     amqp_basic_consume(a->conn, a->channel, amqp_cstring_bytes(queue),
                        amqp_empty_bytes, 0, 1, 0, amqp_empty_table);
     if (!amqp_reply_ok(amqp_get_rpc_reply(a->conn), "basic_consume")) {

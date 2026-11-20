@@ -66,10 +66,10 @@ Notas sobre os gabaritos novos:
   tem fragmentos com offset 0 e MF=1 e o cabeçalho TCP inteiro: são analisados
   (gabarito PORT_SCAN).
 - **ARP_SPOOF**: o `src_ip` é o IP **reivindicado** na resposta ARP divergente
-  (192.168.1.1, o gateway), que é o que o analyzer publica. A detecção ignora
-- **ARP_SPOOF**: o `src_ip` é o IP **reivindicado** na resposta ARP divergente
-  (192.168.1.1, o gateway), que é o que o analyzer publica. A detecção ignora
-  HOME_NET.
+  (192.168.1.1, o gateway), que é o que o analyzer publica. O primeiro ARP
+  reply liga o MAC do atacante a 192.168.1.100; a primeira resposta com
+  192.168.1.1 dispara o alerta. A detecção não aplica HOME_NET (que vale só
+  para o IP layer).
 - **AMPLIFICATION** (`amplification.pcap`): o atacante é o IP que pede e
   responde. Ele emite consultas próprias (denominador) e respostas grandes
   (numerador), e o alerta sai pelo próprio IP.
