@@ -164,6 +164,16 @@ if(NTA_BUILD_TESTS)
         target_link_libraries(test_whois PRIVATE Threads::Threads)
         add_test(NAME test_whois COMMAND test_whois)
     endif()
+
+    # B31: NtaIocStore do nta-server (parser, recarga, concorrência). Só fora do
+    # Windows, como o test_whois: nta_ioc.c usa <arpa/inet.h>. Sem libcurl.
+    if(NOT WIN32)
+        add_executable(test_ioc tests/unit/test_ioc.c
+                src/server/nta_ioc.c ${CJSON_DIR}/cJSON.c)
+        target_include_directories(test_ioc PRIVATE ${SERVER_INC})
+        target_link_libraries(test_ioc PRIVATE Threads::Threads)
+        add_test(NAME test_ioc COMMAND test_ioc)
+    endif()
 endif()
 
 # --- B02: BENCHMARK DE THROUGHPUT pps (opcional, desligado por padrão) -------
