@@ -193,6 +193,16 @@ if(NTA_BUILD_TESTS)
         target_link_libraries(test_export PRIVATE Threads::Threads)
         add_test(NAME test_export COMMAND test_export)
     endif()
+
+    # Replay de arquivo único com gabarito vazio/não vazio (rc do binário).
+    # Só fora do Windows: o binário exige o Npcap, ausente no runner do CI.
+    if(NOT WIN32)
+        add_test(NAME test_replay_gabarito_vazio COMMAND ${CMAKE_COMMAND}
+            -DNTA_EXE=$<TARGET_FILE:NetworkTrafficAnalyzer>
+            -DPCAP_DIR=${CMAKE_SOURCE_DIR}/tests/pcaps
+            -DWORK_DIR=${CMAKE_BINARY_DIR}/replay_gabarito_vazio
+            -P ${CMAKE_SOURCE_DIR}/tests/unit/replay_gabarito_vazio.cmake)
+    endif()
 endif()
 
 # --- B02: BENCHMARK DE THROUGHPUT pps (opcional, desligado por padrão) -------

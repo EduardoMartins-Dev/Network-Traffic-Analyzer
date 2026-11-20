@@ -97,7 +97,14 @@ void gabarito_free(Gabarito *g) {
  * ========================================================================= */
 
 void compare_results(const Gabarito *g, ReplayResult *r) {
-    if (!g || g->count == 0) return;
+    if (!g) return;
+
+    /* Gabarito sem detecções esperadas: passa só se nenhum alerta foi gerado;
+     * qualquer alerta é falso positivo (score 0, o main falha com rc=1). */
+    if (g->count == 0) {
+        r->score = (collector_count() == 0) ? 100.0 : 0.0;
+        return;
+    }
 
     r->expected_count = g->count;
     r->passed         = 0;
