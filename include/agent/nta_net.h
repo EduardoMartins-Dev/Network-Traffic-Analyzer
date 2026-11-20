@@ -5,7 +5,8 @@
  * Rede portável (agente) — Linux, FreeBSD, macOS e Windows (MinGW-w64).     *
  *                                                                           *
  * - Byte order / inet_* vêm de <arpa/inet.h> (POSIX) ou Winsock2.          *
- * - Cabeçalhos IPv4/TCP/UDP são definidos aqui com o layout de wire, em     *
+ * - Cabeçalhos IPv4/IPv6/TCP/UDP/ICMPv6 são definidos aqui com o layout de   *
+ *   wire, em                                                                *
  *   vez de <netinet/ip.h> etc.: não existem no Windows e os nomes de campo        *
  *   variam entre BSD e glibc. Todos os campos multibyte estão em network   *
  *   byte order, como no pacote.                                             *
@@ -31,6 +32,16 @@
 #define NTA_PROTO_ICMP     1
 #define NTA_PROTO_TCP      6
 #define NTA_PROTO_UDP     17
+#define NTA_PROTO_ICMPV6  58
+
+/* Números de protocolo de cabeçalhos de extensão IPv6 (RFC 8200). */
+#define NTA_PROTO_HOPOPT   0
+#define NTA_PROTO_ROUTING 43
+#define NTA_PROTO_FRAGMENT 44
+#define NTA_PROTO_ESP     50
+#define NTA_PROTO_AH      51
+#define NTA_PROTO_DSTOPTS 60
+#define NTA_PROTO_NONEXT 59
 
 typedef struct {
     uint8_t  ver_ihl;    /* versão (4 bits altos) + IHL em palavras de 32 bits */
@@ -72,5 +83,45 @@ typedef struct {
     uint16_t len;
     uint16_t check;
 } NTA_PACKED nta_udp_hdr;
+
+/* IPv6 (RFC 8200): cabeçalho fixo de 40 bytes. Os endereços ficam como bytes
+ * porque não há tipo de wire portável sem Winsock. `ver_tc_flow[0]` tem a
+ * versão nos 4 bits altos; lê-se como byte para não depender da ordem do host. */
+typedef struct {
+    uint8_t  ver_tc_flow[4];
+    uint16_t payload_len;
+    uint8_t  next_hdr;
+    uint8_t  hop_limit;
+    uint8_t  saddr[16];
+    uint8_t  daddr[16];
+} NTA_PACKED nta_ipv6_hdr;
+
+#define NTA_IPV6_HLEN  40
+
+/* Cabeçalhos de extensão Hop-by-Hop, Routing e Destination Options: tamanho em
+ * unidades de 8 bytes, sem contar os primeiros 8. */
+typedef struct {
+    uint8_t next_hdr;
+    uint8_t hdr_ext_len;
+} NTA_PACKED nta_ipv6_ext_hdr;
+
+/* Fragment: sempre 8 bytes. Offset (13 bits) nos bits altos de frag_off_m. */
+typedef struct {
+    uint8_t  next_hdr;
+    uint8_t  reserved;
+    uint16_t frag_off_m;
+    uint32_t id;
+} NTA_PACKED nta_ipv6_frag_hdr;
+
+/* Aplique após ntohs(frag_off_m): offset != 0 = fragmento não inicial (sem L4). */
+#define NTA_IPV6_FRAG_OFFSET_MASK 0xFFF8u
+
+typedef struct {
+    uint8_t  type;
+    uint8_t  code;
+    uint16_t check;
+} NTA_PACKED nta_icmpv6_hdr;
+
+#define NTA_ICMPV6_ECHO_REQUEST 128
 
 #endif /* NTA_NET_H */
