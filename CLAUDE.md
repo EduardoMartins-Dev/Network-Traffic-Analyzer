@@ -52,7 +52,7 @@ Plataformas do agente: Linux, FreeBSD, macOS e Windows nativo (serviço `NTAAgen
 ```
 include/agent|server/   headers          src/agent/{analysis,capture,core,output,platform,replay}
 src/server/             um .c por módulo  third_party/cjson   cJSON vendored
-tests/unit/             ctest             tests/pcaps/        11 pcaps sintéticos (10 com gabarito)
+tests/unit/             ctest             tests/pcaps/        14 pcaps sintéticos (12 com gabarito)
 tests/fuzz/             libFuzzer         tests/bench/        benchmark de pps (opcional)
 deploy/ scripts/ grafana/ installer/ .github/workflows/        infra, automação, dashboards, CI
 ```
@@ -97,7 +97,7 @@ Configuração do agente: variáveis `AGENT_*` ou `--config <arquivo>` (o ambien
 
 - Entregue até a **v8.1** (agente nativo no Windows, servidor em Docker, reconexão AMQP). Depois da `v8.1.1` já estão em `main`, sem tag: o agente com o Npcap padrão, sem o modo WinPcap-compatível (PR #13), o reload do IoC por SIGHUP, canais extras de alerta e os pcaps de cobertura (PRs #14 a #18).
 - Planejado: v9.0 (AF_PACKET/TPACKET_V3, zero-copy) e v10.0 (VPS, Terraform, Nginx, Let's Encrypt, cluster RabbitMQ).
-- `AMPLIFICATION` não detecta um refletor DNS que só envia respostas: os bytes de requisição ficam no IP da vítima e o detector exige 100 bytes de requisição no mesmo IP.
+- `AMPLIFICATION` detecta um refletor DNS que só envia respostas quando o sensor vê a consulta forjada com origem fora de `HOME_NET` (o request é contado no IP de destino, numa tabela fixa de 64 servidores). Não detecta quando a vítima está em `HOME_NET` (gateway da vítima): o skip descarta a consulta. Com a mistura de consultas DNSSEC/ANY, um resolvedor pode disparar a partir de ~70 % de consultas com resposta de ~1 KB (medido com pcaps sintéticos: ratio acumulado 9,8 não dispara; 11,2 dispara).
 - O `analyzer.c` depende de o Winsock ter sido inicializado por outra parte do programa para usar `inet_ntoa` no Windows; o benchmark mede ~3,6 mil pps lá porque substitui o AMQP, e não está provado que o agente real sofra o mesmo.
 - O `ROADMAP.MD` e o `README.md` foram alinhados ao código em 2026-11 (PR #16), mas podem restar divergências: em caso de dúvida, **o código vale**.
 
