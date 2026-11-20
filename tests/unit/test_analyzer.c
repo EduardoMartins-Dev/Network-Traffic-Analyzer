@@ -598,14 +598,18 @@ static void test_exaustao_origens_ipv6_nao_cega_ipv4(void) {
     CHECK(detections("PORT_SCAN", scan) >= 1);
 }
 
-/* Mesma regressão de B28, com os clientes em IPv6: 110 servidores IPv4
- * consultados não podem cegar o port scan IPv4 (srv_req é particionada). */
+/* Mesma regressão de B28, em IPv6: 110 clientes IPv6 distintos consultando 110
+ * servidores IPv6 distintos esgotam as tabelas da família IPv6 (suspects[] e
+ * srv_req são particionadas por família) e não podem cegar o port scan IPv4.
+ * Os endereços são IPv6 de verdade: com um destino IPv4 o inet_pton(AF_INET6)
+ * falha e as 110 consultas iriam todas para "::". */
 static void test_exaustao_dns_ipv6_nao_cega_ipv4(void) {
     fresh();
-    const char *cli = "2001:db8:c::20", *scan = "192.168.1.100";
-    char srv[16];
+    const char *scan = "192.168.1.100";
+    char cli[40], srv[40];
     for (int i = 0; i < 110; i++) {
-        snprintf(srv, sizeof(srv), "203.0.113.%d", i + 1);
+        snprintf(cli, sizeof(cli), "2001:db8:c::%x", i + 1);
+        snprintf(srv, sizeof(srv), "2001:db8:5::%x", i + 1);
         udp6_dns(cli, srv, 0, 29, T0 + i);
     }
     for (int p = 0; p < 30; p++) tcp(scan, (uint16_t)(1000 + p), NTA_TH_SYN, T0 + 110 + p);
