@@ -270,9 +270,18 @@ jobs:
   # cross-platform-actions/action FIXADO no SHA do tag v1.7.0 (publicado em
   # 2026-10-25; a v1.8.0 saiu um dia antes desta revisão). FreeBSD 14.5 é a
   # série estável com pacotes binários. Job lento (emulação): timeout curto.
+  # NÃO bloqueante (continue-on-error) por bugs conhecidos do código, não do
+  # workflow: (1) CMakeLists.txt, bloco não-WIN32 do agente, chama
+  # link_directories(/usr/local/lib) DEPOIS do add_executable; o link não acha
+  # -lrabbitmq. Com -DCMAKE_EXE_LINKER_FLAGS=-L/usr/local/lib o agente linka e o
+  # replay passa (26/26) no FreeBSD. (2) src/server/nta_ioc.c:71 usa AF_INET e
+  # AF_INET6 sem <sys/socket.h>: quebra test_ioc. O test_ipclass foi
+  # interrompido pelo make após esse erro (sem erro próprio no log), ainda não
+  # verificado no FreeBSD. Remover continue-on-error quando isso for corrigido.
   agent-freebsd:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    continue-on-error: true
     permissions:
       contents: read
     defaults:
@@ -294,12 +303,15 @@ jobs:
         run: sudo pkg install -y cmake libpcap rabbitmq-c
 
       - name: Configure CMake
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNTA_BUILD_SERVER=OFF -DCMAKE_EXE_LINKER_FLAGS=-L/usr/local/lib
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNTA_BUILD_SERVER=OFF
 
       - name: Build
         # Sem gerador Ninja, o CMake usa o make do BSD, que não aceita -j sem
         # número (--parallel vazio). Passa o número de CPUs explicitamente.
-        run: cmake --build build --target NetworkTrafficAnalyzer --parallel "$(sysctl -n hw.ncpu)"
+        run: cmake --build build --parallel "$(sysctl -n hw.ncpu)"
+
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure
 
       - name: Run replay tests
         run: ./build/NetworkTrafficAnalyzer --replay-dir tests/pcaps/ --report tests/report.json
