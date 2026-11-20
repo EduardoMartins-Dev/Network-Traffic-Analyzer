@@ -214,6 +214,20 @@ static ArpEntry arp_table[MAX_ARP_ENTRIES];
 static int      arp_count = 0;
 
 /* ========================================================================= *
+ * TABELA DE REQUESTS POR SERVIDOR (AMPLIFICATION)                           *
+ *                                                                           *
+ * Bytes de consulta DNS recebidos por IP de servidor. Fica fora de          *
+ * suspects[] de propósito: consultas a muitos destinos não podem gastar as  *
+ * vagas de suspeitos (MAX_SUSPECTS) e cegar o IDS para os demais IPs.       *
+ * Tamanho fixo; quando enche, substitui a entrada menos recente. Zera a      *
+ * contagem após INACTIVE_TIMEOUT sem consultas, como um Suspect inativo.    *
+ * ========================================================================= */
+#define SRV_REQ_SLOTS 64
+typedef struct { uint32_t ip; uint64_t req_bytes; time_t last_seen; } SrvReq;
+static SrvReq   srv_req[SRV_REQ_SLOTS];
+static int      srv_req_count = 0;
+
+/* ========================================================================= *
  * BASELINE EWMA — implementação                                             *
  * ========================================================================= */
 
@@ -412,6 +426,8 @@ void analyzer_reset(void) {
     last_cleanup  = 0;
     memset(arp_table, 0, sizeof(arp_table));
     arp_count = 0;
+    memset(srv_req, 0, sizeof(srv_req));
+    srv_req_count = 0;
 }
 
 static void cleanup_suspects(time_t now) {
@@ -446,6 +462,48 @@ static Suspect *find_or_create_suspect(uint32_t ip, time_t now) {
     suspects[suspect_count].baseline.window_start = now;
 
     return &suspects[suspect_count++];
+}
+
+/** Busca um Suspect sem criar: não gasta vaga quando o IP não existe. */
+static Suspect *find_suspect(uint32_t ip) {
+    for (int i = 0; i < suspect_count; i++) {
+        if (suspects[i].ip == ip) return &suspects[i];
+    }
+    return NULL;
+}
+
+/** Requests recebidos pelo IP como servidor (0 se inativo ou ausente). */
+static uint64_t srv_req_get(uint32_t ip, time_t now) {
+    for (int i = 0; i < srv_req_count; i++) {
+        if (srv_req[i].ip == ip)
+            return difftime(now, srv_req[i].last_seen) < INACTIVE_TIMEOUT
+                   ? srv_req[i].req_bytes : 0;
+    }
+    return 0;
+}
+
+/** Soma bytes de consulta para o servidor `ip`; substitui a entrada menos recente se cheia. */
+static void srv_req_add(uint32_t ip, int bytes, time_t now) {
+    SrvReq *e = NULL;
+    for (int i = 0; i < srv_req_count && !e; i++) {
+        if (srv_req[i].ip == ip) e = &srv_req[i];
+    }
+    if (!e) {
+        if (srv_req_count < SRV_REQ_SLOTS) {
+            e = &srv_req[srv_req_count++];
+        } else {
+            e = &srv_req[0];
+            for (int i = 1; i < SRV_REQ_SLOTS; i++) {
+                if (srv_req[i].last_seen < e->last_seen) e = &srv_req[i];
+            }
+        }
+        e->ip        = ip;
+        e->req_bytes = 0;
+    } else if (difftime(now, e->last_seen) >= INACTIVE_TIMEOUT) {
+        e->req_bytes = 0;                       /* inativo: recomeça a contagem */
+    }
+    e->req_bytes += (uint64_t)bytes;
+    e->last_seen  = now;
 }
 
 /**
@@ -611,19 +669,26 @@ static const char *detect_dns_tunnel(Suspect *s, const unsigned char *dns_payloa
 }
 
 /**
+ * @brief Ratio de AMPLIFICATION: alerta se resp > req * 10, com req >= 100 bytes.
+ */
+static const char *amplification_ratio(uint64_t req, uint64_t resp) {
+    if (req < 100) return NULL;
+    return (resp > req * AMPLIFICATION_RATIO) ? "AMPLIFICATION" : NULL;
+}
+
+/**
  * @brief Detecta DDoS Amplification por ratio de bytes response/request.
  *
  * Quando as respostas DNS de um IP excedem 10x os requests, o IP está
- * sendo usado como refletor/amplificador. O request entra no Suspect de quem
- * consulta (origem) e no do servidor consultado (destino, ver analyze_packet).
+ * sendo usado como refletor/amplificador. O request de um IP é o que ele
+ * consultou (Suspect) mais o que recebeu como servidor (srv_req).
  */
-static const char *detect_amplification(Suspect *s, int bytes, int is_response) {
+static const char *detect_amplification(Suspect *s, int bytes, int is_response, time_t now) {
     if (is_response) s->dns_resp_bytes += bytes;
     else             s->dns_req_bytes  += bytes;
 
-    if (s->dns_req_bytes < 100) return NULL;
-    return (s->dns_resp_bytes > s->dns_req_bytes * AMPLIFICATION_RATIO)
-           ? "AMPLIFICATION" : NULL;
+    return amplification_ratio(s->dns_req_bytes + srv_req_get(s->ip, now),
+                               s->dns_resp_bytes);
 }
 
 /**
@@ -858,20 +923,27 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
                 if (!is_response)
                     attack = detect_dns_tunnel(s, dns_payload, dns_len);
                 if (!attack)
-                    attack = detect_amplification(s, length, is_response);
+                    attack = detect_amplification(s, length, is_response, now);
 
-                /* Consulta: o request também conta no servidor (IP de destino),
-                 * que é quem envia as respostas grandes. Sem isso, um refletor
-                 * que só responde nunca tem request no próprio Suspect. Destino
-                 * em HOME_NET não é avaliado (mesmo critério da origem). */
+                /* Consulta para servidor fora de HOME_NET: o request vai só para a
+                 * tabela srv_req, sem criar Suspect (cada destino gastaria uma vaga
+                 * de suspects[]). Se o servidor já tem respostas acumuladas e o
+                 * ratio estoura agora, o alerta é dele: aí obtém o Suspect dele. */
                 if (!is_response && dst_port == 53 && ip_header->daddr != src_ip &&
                     !is_home_ip(ip_header->daddr)) {
-                    Suspect *srv = find_or_create_suspect(ip_header->daddr, now);
-                    if (srv) {
-                        const char *srv_attack = detect_amplification(srv, length, 0);
-                        if (!attack && srv_attack) {
+                    srv_req_add(ip_header->daddr, length, now);
+
+                    Suspect *srv = attack ? NULL : find_suspect(ip_header->daddr);
+                    const char *srv_attack = srv
+                        ? amplification_ratio(srv->dns_req_bytes +
+                                              srv_req_get(ip_header->daddr, now),
+                                              srv->dns_resp_bytes)
+                        : NULL;
+                    if (srv_attack) {
+                        Suspect *alvo = find_or_create_suspect(ip_header->daddr, now);
+                        if (alvo) {
                             attack             = srv_attack;
-                            report             = srv;
+                            report             = alvo;
                             report_addr.s_addr = ip_header->daddr;
                         }
                     }
