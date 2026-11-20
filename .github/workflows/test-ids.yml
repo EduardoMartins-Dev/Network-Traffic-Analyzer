@@ -294,7 +294,7 @@ jobs:
         run: sudo pkg install -y cmake libpcap rabbitmq-c
 
       - name: Configure CMake
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNTA_BUILD_SERVER=OFF
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNTA_BUILD_SERVER=OFF -DCMAKE_EXE_LINKER_FLAGS=-L/usr/local/lib
 
       - name: Build
         # Sem gerador Ninja, o CMake usa o make do BSD, que não aceita -j sem
