@@ -1,6 +1,6 @@
 /* ========================================================================= *
  *  nta_narrator.c — chama Groq Cloud (OpenAI-compatible) p/ gerar narrativa *
- *  de incidente. Substitui src/ingestor/narrator.py em C puro (libcurl).    *
+ *  de incidente em C puro (libcurl). Substitui o narrator Python antigo.    *
  * ========================================================================= */
 
 #include "nta_narrator.h"

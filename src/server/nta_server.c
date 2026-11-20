@@ -1,5 +1,5 @@
 /* ========================================================================= *
- *  nta-server — servidor central em C (substituto do data_ingestor.py).     *
+ *  nta-server — servidor em C (substituto do antigo ingestor Python).       *
  *                                                                           *
  *  Responsabilidades (completas na v7.0):                                   *
  *    1. Consome traffic_queue (N workers, 1 conn AMQP cada)                 *
