@@ -812,8 +812,10 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
         if (arp_attack && length >= 42) {
             /* Extrai sender IP do ARP reply (offset 14+14=28) para o collector */
             struct in_addr arp_sender;
+            char           arp_str[INET_ADDRSTRLEN];
             memcpy(&arp_sender.s_addr, packet + 28, 4);
-            collector_record(arp_attack, inet_ntoa(arp_sender), now);
+            inet_ntop(AF_INET, &arp_sender, arp_str, sizeof(arp_str));
+            collector_record(arp_attack, arp_str, now);
         }
         return arp_attack ? 1 : 0;
     }
@@ -850,12 +852,14 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
         update_baseline(&s->baseline, 0, 0, now);
 
         attack = detect_icmp_flood(s);
+        char src_str[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &src_addr, src_str, sizeof(src_str));
         if (attack) {
             advance_kill_chain(s, attack, now);
-            collector_record(attack, inet_ntoa(src_addr), now);
+            collector_record(attack, src_str, now);
         }
 
-        publish_packet(inet_ntoa(src_addr), 0, "ICMP", length,
+        publish_packet(src_str, 0, "ICMP", length,
                        attack ? 1 : 0, attack,
                        kc_stage_name[s->kc_stage], s->kc_score,
                        attack ? attack_to_mitre(attack) : "");
@@ -883,12 +887,14 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
         if (!attack) attack = detect_brute_force(s, flags, dst_port, now);
         if (!attack) attack = detect_port_scan(s, dst_port);
 
+        char src_str[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &src_addr, src_str, sizeof(src_str));
         if (attack) {
             advance_kill_chain(s, attack, now);
-            collector_record(attack, inet_ntoa(src_addr), now);
+            collector_record(attack, src_str, now);
         }
 
-        publish_packet(inet_ntoa(src_addr), dst_port, "TCP", length,
+        publish_packet(src_str, dst_port, "TCP", length,
                        attack ? 1 : 0, attack,
                        kc_stage_name[s->kc_stage], s->kc_score,
                        attack ? attack_to_mitre(attack) : "");
@@ -951,12 +957,14 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
             }
         }
 
+        char report_str[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &report_addr, report_str, sizeof(report_str));
         if (attack) {
             advance_kill_chain(report, attack, now);
-            collector_record(attack, inet_ntoa(report_addr), now);
+            collector_record(attack, report_str, now);
         }
 
-        publish_packet(inet_ntoa(report_addr), dst_port, "UDP", length,
+        publish_packet(report_str, dst_port, "UDP", length,
                        attack ? 1 : 0, attack,
                        kc_stage_name[report->kc_stage], report->kc_score,
                        attack ? attack_to_mitre(attack) : "");
