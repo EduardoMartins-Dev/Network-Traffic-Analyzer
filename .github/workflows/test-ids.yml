@@ -94,8 +94,12 @@ jobs:
           sudo apt-get install -y cmake clang pkg-config libpcap-dev
           CLANG_VER=$(clang --version | grep -oE '[0-9]+' | head -1)
           sudo apt-get install -y "libclang-rt-${CLANG_VER}-dev"
-          echo 'int main(void) { return 0; }' | \
-            clang -fsanitize=fuzzer,address,undefined -x c - -o /tmp/fuzz-probe
+          cat > /tmp/fuzz-probe.c <<'EOF'
+          #include <stddef.h>
+          #include <stdint.h>
+          int LLVMFuzzerTestOneInput(const uint8_t *d, size_t n) { (void)d; (void)n; return 0; }
+          EOF
+          clang -fsanitize=fuzzer,address,undefined /tmp/fuzz-probe.c -o /tmp/fuzz-probe
           echo "libFuzzer disponível (clang ${CLANG_VER})"
 
       - name: Build harness (libFuzzer + ASan + UBSan)
