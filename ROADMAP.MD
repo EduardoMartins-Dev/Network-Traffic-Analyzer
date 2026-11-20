@@ -5,7 +5,7 @@ Evolução do projeto desde um sniffer básico até um **IDS comportamental com 
 ```
 v1.0    v2.0      v3.0         v4.0       v5.0       v5.5         v6.0           v7.0           v8.0          v9.0       v10.0
 Captura→Mensageria→Agent/Server→IDS Engine→Multi-Thr→DX+LLM-Tools→AI Narrator(C)→nta-server→Threat Intel→Alta Perf→Prod + IaC
-  ✅      ✅         ✅            ✅         ✅         ✅           PARCIAL(Py)    ✅            ✅           PLANEJADO  PLANEJADO
+  ✅      ✅         ✅            ✅         ✅         ✅           ✅ (C na v7)   ✅            ✅           PLANEJADO  PLANEJADO
 ```
 
 > **Nota de ordem (revisão 2026-04):** o deploy em VPS foi movido para o **final** do roadmap (v10.0). Motivo: evitar pagar VPS + domínio durante o desenvolvimento das features (v6.0 → v9.0). A infra de produção entra só quando o stack estiver completo e estável localmente.
@@ -25,14 +25,14 @@ Captura→Mensageria→Agent/Server→IDS Engine→Multi-Thr→DX+LLM-Tools→AI
 * Inicialização de dispositivo via libpcap em modo promíscuo
 * Loop de captura com filtros BPF (TCP / UDP / ICMP)
 * Parsing de cabeçalhos via aritmética de ponteiros (Ethernet → IP → TCP/UDP)
+* Infraestrutura RabbitMQ via Docker (porta 5674) — já presente na tag `v1.0` (`docker-compose.yml`, `CMakeLists.txt`)
+* Publicação assíncrona via librabbitmq (AMQP 0.9.1)
 
 ### v2.0 — Mensageria e IDS Engine ✅
 
 **Objetivo:** desacoplar captura de armazenamento e implementar detecção comportamental.
 
-* Infraestrutura RabbitMQ via Docker (porta 5674)
 * Serialização de pacotes para JSON com cJSON
-* Publicação assíncrona via librabbitmq (AMQP 0.9.1)
 * Detector de Port Scan (limiar: ≥15 portas únicas por IP)
 * Detector de ICMP Flood (limiar: ≥20 pacotes por IP)
 * Tabela de IPs suspeitos com garbage collection (timeout: 300s)
@@ -66,7 +66,7 @@ Captura→Mensageria→Agent/Server→IDS Engine→Multi-Thr→DX+LLM-Tools→AI
 * **DNS Tunneling:** análise de payload DNS — subdomains anormalmente longos (>50 chars), volume anômalo de queries para o mesmo domínio, entropia alta no subdomain (base64/hex encoding)
 * **ARP Spoofing:** tabela MAC→IP mantida em memória. Alerta quando um MAC já associado a um IP aparece reivindicando outro (gratuitous ARP com IP diferente)
 * **SSH/FTP Brute Force:** contador de conexões SYN para portas 22/21/3389 por IP de origem em janela de tempo. Limiar: ≥30 tentativas em 60 segundos
-* **DDoS Amplification:** detecção de respostas DNS/NTP desproporcionais ao volume de requests (response ratio > 10:1)
+* **DDoS Amplification:** detecção de respostas DNS desproporcionais ao volume de requests (response ratio > 10:1)
 
 **Baseline adaptativo (EWMA):**
 
@@ -105,8 +105,8 @@ Captura→Mensageria→Agent/Server→IDS Engine→Multi-Thr→DX+LLM-Tools→AI
 
 **Dataset de testes:**
 
-* PCAPs curados de ataques conhecidos: CICIDS2017, Malware Traffic Analysis, CTF captures
-* Um pcap por tipo de ataque: `syn-flood.pcap`, `null-scan.pcap`, `dns-tunnel.pcap`, `arp-spoof.pcap`
+* PCAPs sintéticos e determinísticos gerados por `tests/pcaps/gen_pcaps.py` (7 arquivos: `syn-flood`, `null-scan`, `port-scan`, `brute-force`, `icmp-flood`, `dns-tunnel`, `malformed`). Não há pcap de ARP spoofing no repositório. Datasets públicos (CICIDS2017, Malware Traffic Analysis, CTF) ficam como opção para validação com tráfego real (ver `tests/pcaps/README.md`)
+* Um pcap por tipo de ataque, cada um com gabarito `.json` de mesmo nome
 * Gabaritos JSON com tempos esperados e tolerâncias
 
 **CI/CD no GitHub Actions:**
@@ -164,7 +164,7 @@ Captura→Mensageria→Agent/Server→IDS Engine→Multi-Thr→DX+LLM-Tools→AI
 **LLM Dashboard Generator (`scripts/dash_gen.py`):**
 
 * CLI Python que recebe descrição em PT-BR e gera dashboard Grafana
-* Backend LLM: Ollama local (mesmo container do narrator) — modelo default `llama3.1:8b` (configurável via `DASH_GEN_MODEL`)
+* Backend LLM: Groq Cloud (`GROQ_API_KEY`, lida de `deploy/secrets/groq.env`) — modelo default `llama-3.3-70b-versatile` (configurável via `DASH_GEN_MODEL` ou `--model`)
 * Prompt inclui schema do InfluxDB (measurements, tags, fields) — LLM nunca inventa nomes de campo
 * Validação estrutural: panels mínimos, queries Flux começam com `from(bucket:`, ids únicos, datasource UID correto
 * **Publicação via Grafana API** (`POST /api/dashboards/db`) — dashboard aparece no UI imediatamente, é editável e persiste em `grafana_data`
@@ -199,9 +199,11 @@ Captura→Mensageria→Agent/Server→IDS Engine→Multi-Thr→DX+LLM-Tools→AI
 
 ### v6.0 — AI Narrator (LLM Integration)
 
-> **Status (2026-05):** **PARCIAL — implementado em Python**, não em C.
+> **Status (revisão 2026-11):** **✅ núcleo entregue; implementação em C desde a v7.0.** A versão original era Python. O ingestor Python foi removido (commit `9158853`) e o narrator atual é `src/server/nta_narrator.c`, só com Groq e um modelo único (`GROQ_MODEL`, default `llama-3.3-70b-versatile`). O backend Ollama não existe mais no código.
 >
-> O `src/ingestor/narrator.py` chama LLM (Ollama local OU Groq cloud) quando um incidente passa do `NARRATOR_MIN_SCORE` (default 80). A narrativa é gravada na measurement `incident_narrative` no InfluxDB e exibida no painel "Narrativas IA" do dashboard.
+> **Não implementado até hoje:** roteamento por score entre modelos, batch API e prompt caching (seção "Restante" abaixo).
+>
+> (Histórico) O `src/ingestor/narrator.py`, já removido, chamava LLM (Ollama local OU Groq cloud) quando um incidente passa do `NARRATOR_MIN_SCORE` (default 80). A narrativa é gravada na measurement `incident_narrative` no InfluxDB e exibida no painel "Narrativas IA" do dashboard.
 >
 > **Decisão de arquitetura:** narrator em C foi adiado para v7.0 (junto com a reescrita do ingestor → `nta-server`). Razão: implementar em Python desbloqueou a feature em ~1 dia vs ~1 semana em C, e o fluxo continua válido — só o consumidor muda. As partes restantes do escopo original (roteamento inteligente entre 3 modelos, batch API, prompt caching) ficam para a versão C.
 
@@ -262,11 +264,11 @@ MITRE ATT&CK: T1557, T1046, T1110, T1071.004, T1498
 
 ---
 
-### v7.0 — Escalabilidade, Multi-Agente e Ingestão Elástica
+### v7.0 — Escalabilidade, Multi-Agente e Ingestão Elástica ✅
 
-> **Status (2026-05):** **PARCIAL — esqueleto C presente, integração pendente.**
+> **Status (revisão 2026-11):** **✅ núcleo entregue** (commit `6aa9b97`). `nta-server` em C em `src/server/`: consumidor AMQP, InfluxDB, GeoIP, narrator em C, pool adaptativo (`nta_scaler.c`) e `/health` e `/metrics`. O ingestor Python foi removido. A retenção (hot 7d, warm 90d) está em `scripts/influx_retention.sh` e o mTLS multi-agente está no README.
 >
-> Headers já criados: `nta_server.h`, `nta_consumer.h`, `nta_influx.h`, `nta_geoip.h`. Sources em `src/server/`. CMake já produz binário `nta-server` ligado a libcurl + libmaxminddb. Falta: thread pool adaptativo, integração com narrator (porta do Python para C), substituição do `data_ingestor.py` no `up.sh`, RabbitMQ cluster.
+> **Não entregue:** cluster RabbitMQ de 3 nós, deferido para a v10.0 (ver README); registro de agentes por API REST (o provisionamento é por `scripts/provision_agent.sh`); alerta de host offline (ainda não implementado).
 
 > **Quando um único agente não é suficiente.** Preparar o sistema para operar com múltiplos agentes reportando para o mesmo servidor central, com capacidade de processamento que escala automaticamente.
 
@@ -290,9 +292,9 @@ Binário C que substitui o ingestor Python. Responsável por:
 │                                              │
 │  ┌─────────────────────────────────────────┐ │
 │  │  Scaler Thread (monitora queue_depth)   │ │
-│  │  depth > HIGH_WATERMARK → +1 thread     │ │
-│  │  depth < LOW_WATERMARK  → -1 thread     │ │
-│  │  Limites: MIN_THREADS=1, MAX_THREADS=8  │ │
+│  │  backlog ≥ 1000 → +1 worker             │ │
+│  │  backlog 0 por 60s → -1 worker          │ │
+│  │  Limites: MIN=2, MAX=16 (SCALER_*)      │ │
 │  └────────────┬────────────────────────────┘ │
 │               │ pthread_create / pthread_join │
 │    ┌──────────┼──────────┐                   │
@@ -491,18 +493,16 @@ Binário C que substitui o ingestor Python. Responsável por:
 | Tática | Technique | v3.0 | v4.0 |
 |---|---|---|---|
 | Reconnaissance | T1046 Network scan | ✅ | ✅ |
-| Reconnaissance | T1018 Remote discovery | — | ✅ |
-| Discovery | T1040 Network sniffing | — | ✅ |
-| Discovery | T1016 System network | — | ✅ |
 | Lateral Movement | T1557 ARP spoofing | — | ✅ |
 | Credential Access | T1110 Brute force | — | ✅ |
-| Command & Control | T1071 DNS tunneling | — | ✅ |
-| Command & Control | T1571 Non-standard port | — | ✅ |
+| Command & Control | T1071.004 DNS tunneling | — | ✅ |
 | Exfiltration | T1048 Exfil over DNS | — | ✅ |
 | Impact | T1498 ICMP flood | ✅ | ✅ |
 | Impact | T1498 SYN flood | — | ✅ |
 | Impact | T1498 Amplification | — | ✅ |
-| **Total** | | **3** | **14** |
+| **Total** | | **3** | **6** |
+
+> v4.0 (código atual): `attack_to_mitre()` em `src/agent/analysis/analyzer.c` emite 6 IDs distintos (T1046, T1557, T1498, T1110, T1071.004, T1048). T1498 cobre 3 detecções. As técnicas T1018, T1040, T1016 e T1571 saíram da tabela porque nenhuma detecção as emite.
 
 ---
 

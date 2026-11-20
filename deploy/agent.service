@@ -1,6 +1,6 @@
 [Unit]
 Description=Network Traffic Analyzer — sensor agent
-Documentation=https://github.com/barbosa/Network-Traffic-Analyzer
+Documentation=https://github.com/EduardoMartins-Dev/Network-Traffic-Analyzer
 After=network-online.target
 Wants=network-online.target
 # Desiste depois de 5 falhas em 60s para não mascarar bug real.
