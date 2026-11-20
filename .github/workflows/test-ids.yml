@@ -297,7 +297,9 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNTA_BUILD_SERVER=OFF
 
       - name: Build
-        run: cmake --build build --parallel
+        # Sem gerador Ninja, o CMake usa o make do BSD, que não aceita -j sem
+        # número (--parallel vazio). Passa o número de CPUs explicitamente.
+        run: cmake --build build --parallel "$(sysctl -n hw.ncpu)"
 
       - name: Unit tests
         run: ctest --test-dir build --output-on-failure
