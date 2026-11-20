@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <math.h>
 #include <time.h>
 #include "analyzer.h"
@@ -327,6 +328,27 @@ static SrvReq   srv_req[2][SRV_REQ_SLOTS];
 static int      srv_req_count[2] = {0, 0};
 
 /* ========================================================================= *
+ * CONTADORES DE VLAN E FRAGMENTAÇÃO (B10)                                   *
+ *                                                                           *
+ * Atômicos (relaxed): o metrics_thread lê enquanto o analysis_thread escreve.*
+ * Só são tocados em quadro com tag ou com fragmento; o caminho comum (IPv4 e *
+ * IPv6 sem tag e sem fragmento) não executa nenhuma escrita a mais.         *
+ * ========================================================================= */
+static _Atomic uint64_t g_vlan_frames;
+static _Atomic uint64_t g_frag_seen;
+static _Atomic uint64_t g_frag_discarded;
+
+static void stat_inc(_Atomic uint64_t *c) {
+    atomic_fetch_add_explicit(c, 1, memory_order_relaxed);
+}
+
+void analyzer_get_stats(analyzer_stats_t *out) {
+    out->vlan_frames    = atomic_load_explicit(&g_vlan_frames, memory_order_relaxed);
+    out->frag_seen      = atomic_load_explicit(&g_frag_seen, memory_order_relaxed);
+    out->frag_discarded = atomic_load_explicit(&g_frag_discarded, memory_order_relaxed);
+}
+
+/* ========================================================================= *
  * BASELINE EWMA — implementação                                             *
  * ========================================================================= */
 
@@ -527,6 +549,9 @@ void analyzer_reset(void) {
     arp_count = 0;
     memset(srv_req, 0, sizeof(srv_req));
     srv_req_count[0] = srv_req_count[1] = 0;
+    atomic_store_explicit(&g_vlan_frames, 0, memory_order_relaxed);
+    atomic_store_explicit(&g_frag_seen, 0, memory_order_relaxed);
+    atomic_store_explicit(&g_frag_discarded, 0, memory_order_relaxed);
 }
 
 static void cleanup_suspects(time_t now) {
@@ -809,14 +834,14 @@ static const char *detect_amplification(Suspect *s, int bytes, int is_response, 
  * Mantém tabela MAC→IP. Alerta quando um MAC visto com IP_A aparece em
  * ARP reply reivindicando IP_B (gratuitous ARP com IP diferente).
  *
- * Layout ARP (após Ethernet 14 bytes):
+ * Layout ARP (após o Ethernet, com `l3_off` bytes, 14 sem VLAN):
  *   +8:  Sender MAC (6 bytes)
  *   +14: Sender IP  (4 bytes)
  */
-static const char *detect_arp_spoof(const unsigned char *packet, int length) {
-    if (length < 42) return NULL;
+static const char *detect_arp_spoof(const unsigned char *packet, int length, int l3_off) {
+    if (length - l3_off < 28) return NULL;   /* cabeçalho ARP sobre Ethernet */
 
-    const unsigned char *arp = packet + 14;
+    const unsigned char *arp = packet + l3_off;
 
     /* Operação 2 = ARP Reply */
     uint16_t operation = (arp[6] << 8) | arp[7];
@@ -901,45 +926,113 @@ static const char *detect_icmp_flood(Suspect *s) {
  * ========================================================================= */
 
 /* Resultado do parsing de IP: endereços, protocolo da camada superior e o
- * trecho L4 (`l4`) com `l4_len` bytes disponíveis a partir dele. */
+ * trecho L4 (`l4`) com `l4_len` bytes disponíveis a partir dele. `frag` = 1 se
+ * é fragmento inicial (offset 0, MF=1): o L4 pode estar truncado pelo fragmento. */
 typedef struct {
     NtaAddr        src, dst;
     uint8_t        proto;
     const uint8_t *l4;
     int            l4_len;
+    int            frag;
 } IpPkt;
 
 /* Limite de cabeçalhos de extensão IPv6 por pacote. Acima disso o pacote é
  * descartado: evita cadeias longas que custam tempo sem trazer detecção. */
 #define MAX_IPV6_EXT 8
 
-static int parse_ipv4(const unsigned char *packet, int length, IpPkt *p) {
-    if (length < NTA_ETH_HLEN + (int)sizeof(nta_ipv4_hdr)) return 0;
+/* Quadro Ethernet: pula as tags VLAN empilhadas (802.1Q e 802.1ad) e devolve o
+ * EtherType real e o deslocamento do cabeçalho L3 (14 sem tag). Cada tag é
+ * validada contra `length` antes de ser lida; tag cortada ou mais de
+ * NTA_VLAN_MAX_TAGS tags descartam o quadro. */
+static int parse_ethernet(const unsigned char *packet, int length,
+                          uint16_t *ether_type, int *l3_off) {
+    if (length < NTA_ETH_HLEN) return 0;
 
-    const nta_ipv4_hdr *ip = (const nta_ipv4_hdr *)(packet + NTA_ETH_HLEN);
+    uint16_t et   = (uint16_t)((packet[12] << 8) | packet[13]);
+    int      off  = NTA_ETH_HLEN;
+    int      tags = 0;
+
+    if (et == NTA_ETH_TYPE_VLAN || et == NTA_ETH_TYPE_QINQ) {
+        stat_inc(&g_vlan_frames);
+        while (et == NTA_ETH_TYPE_VLAN || et == NTA_ETH_TYPE_QINQ) {
+            if (tags == NTA_VLAN_MAX_TAGS || length - off < NTA_VLAN_TAG_LEN)
+                return 0;
+            et   = (uint16_t)((packet[off + 2] << 8) | packet[off + 3]);
+            off += NTA_VLAN_TAG_LEN;
+            tags++;
+        }
+    }
+
+    *ether_type = et;
+    *l3_off     = off;
+    return 1;
+}
+
+/* Fragmento inicial sem o cabeçalho L4 inteiro (tiny fragment): não é analisado
+ * e conta como descartado. Retorna 1 quando o L4 não cabe. */
+static int l4_short(const IpPkt *p, int need) {
+    if (p->l4_len >= need) return 0;
+    if (p->frag) stat_inc(&g_frag_discarded);
+    return 1;
+}
+
+/* `off` = início do cabeçalho IPv4 no quadro (14, ou mais com tags VLAN). */
+static int parse_ipv4(const unsigned char *packet, int length, int off, IpPkt *p) {
+    if (length - off < (int)sizeof(nta_ipv4_hdr)) return 0;
+
+    const nta_ipv4_hdr *ip = (const nta_ipv4_hdr *)(packet + off);
     int ip_hlen = NTA_IPV4_HLEN(ip);
-    if (ip_hlen < (int)sizeof(nta_ipv4_hdr) || NTA_ETH_HLEN + ip_hlen > length)
+    if (ip_hlen < (int)sizeof(nta_ipv4_hdr) || ip_hlen > length - off)
         return 0;
 
-    p->src   = na_v4(ip->saddr);
-    p->dst   = na_v4(ip->daddr);
-    p->proto = ip->proto;
-    p->l4    = packet + NTA_ETH_HLEN + ip_hlen;
-    p->l4_len = length - NTA_ETH_HLEN - ip_hlen;
+    /* frag_off em ordem de host montado por bytes: sem ntohs, que no MinGW é
+     * chamada ao ws2_32 e custava ~10 % por pacote IPv4 (medido). */
+    const uint8_t *fb = (const uint8_t *)&ip->frag_off;
+    int      frag = 0;
+    uint16_t fo   = (uint16_t)((fb[0] << 8) | fb[1]);
+
+    /* Fragmento (MF ou offset != 0). Offset != 0 é não inicial: não há L4 no
+     * começo do payload, e ler ali leria dados do meio do datagrama como TCP,
+     * UDP ou ICMP. Descartado aqui, sem chegar aos detectores. */
+    if (fo & NTA_IPV4_FRAG_ANY) {
+        stat_inc(&g_frag_seen);
+        if (fo & NTA_IPV4_FRAG_OFFSET) {
+            stat_inc(&g_frag_discarded);
+            return 0;
+        }
+        frag = 1;
+    }
+
+    int l4_len = length - off - ip_hlen;
+    if (frag) {
+        /* Fragmento inicial: o L4 vale só até o fim do datagrama (tot_len). O
+         * resto do quadro, até os 60 bytes do padding de Ethernet, não é IP. */
+        int dgram = (int)ntohs(ip->tot_len) - ip_hlen;
+        if (dgram < 0) dgram = 0;
+        if (dgram < l4_len) l4_len = dgram;
+    }
+
+    p->src    = na_v4(ip->saddr);
+    p->dst    = na_v4(ip->daddr);
+    p->proto  = ip->proto;
+    p->l4     = packet + off + ip_hlen;
+    p->l4_len = l4_len;
+    p->frag   = frag;
     return 1;
 }
 
 /* IPv6: cabeçalho fixo de 40 bytes, depois cadeia de extensões. Fragmento não
  * inicial (offset != 0) não tem cabeçalho L4 e é descartado. ESP e "No Next
  * Header" também são descartados: não há camada superior para analisar. */
-static int parse_ipv6(const unsigned char *packet, int length, IpPkt *p) {
-    if (length < NTA_ETH_HLEN + NTA_IPV6_HLEN) return 0;
+static int parse_ipv6(const unsigned char *packet, int length, int base, IpPkt *p) {
+    if (length - base < NTA_IPV6_HLEN) return 0;
 
-    const nta_ipv6_hdr *ip6 = (const nta_ipv6_hdr *)(packet + NTA_ETH_HLEN);
+    const nta_ipv6_hdr *ip6 = (const nta_ipv6_hdr *)(packet + base);
     if ((ip6->ver_tc_flow[0] >> 4) != 6) return 0;
 
-    int     off = NTA_ETH_HLEN + NTA_IPV6_HLEN;
-    uint8_t nh  = ip6->next_hdr;
+    int     off  = base + NTA_IPV6_HLEN;
+    uint8_t nh   = ip6->next_hdr;
+    int     frag = 0;
 
     for (int n = 0; ; n++) {
         if (nh == NTA_PROTO_HOPOPT || nh == NTA_PROTO_ROUTING ||
@@ -963,7 +1056,12 @@ static int parse_ipv6(const unsigned char *packet, int length, IpPkt *p) {
             if (n >= MAX_IPV6_EXT || length - off < (int)sizeof(nta_ipv6_frag_hdr))
                 return 0;
             const nta_ipv6_frag_hdr *f = (const nta_ipv6_frag_hdr *)(packet + off);
-            if (ntohs(f->frag_off_m) & NTA_IPV6_FRAG_OFFSET_MASK) return 0;
+            stat_inc(&g_frag_seen);
+            if (ntohs(f->frag_off_m) & NTA_IPV6_FRAG_OFFSET_MASK) {
+                stat_inc(&g_frag_discarded);
+                return 0;
+            }
+            frag = 1;
             nh   = f->next_hdr;
             off += (int)sizeof(nta_ipv6_frag_hdr);
         } else {
@@ -973,11 +1071,20 @@ static int parse_ipv6(const unsigned char *packet, int length, IpPkt *p) {
 
     if (nh == NTA_PROTO_ESP || nh == NTA_PROTO_NONEXT) return 0;
 
+    /* Fragmento inicial: o L4 vale só até o fim do datagrama (payload_len); o
+     * resto do quadro não é deste pacote. Sem fragmento, vale até o fim do quadro. */
+    int end = length;
+    if (frag) {
+        int dend = base + NTA_IPV6_HLEN + (int)ntohs(ip6->payload_len);
+        if (dend < end) end = dend;
+    }
+
     p->src    = na_v6(ip6->saddr);
     p->dst    = na_v6(ip6->daddr);
     p->proto  = nh;
     p->l4     = packet + off;
-    p->l4_len = length - off;
+    p->l4_len = end > off ? end - off : 0;
+    p->frag   = frag;
     return 1;
 }
 
@@ -1004,18 +1111,19 @@ static int parse_ipv6(const unsigned char *packet, int length, IpPkt *p) {
 int analyze_packet(const unsigned char *packet, int length, time_t now) {
     cleanup_suspects(now);
 
-    if (length < 14) return 0;
-
-    /* EtherType: 0x0806 = ARP | 0x0800 = IPv4 | 0x86DD = IPv6 */
-    uint16_t ether_type = (packet[12] << 8) | packet[13];
+    /* EtherType depois das tags VLAN: 0x0806 = ARP | 0x0800 = IPv4 | 0x86DD = IPv6.
+     * `l3_off` é onde começa o cabeçalho L3 (14 sem tag, mais 4 por tag). */
+    uint16_t ether_type = 0;
+    int      l3_off     = 0;
+    if (!parse_ethernet(packet, length, &ether_type, &l3_off)) return 0;
 
     if (ether_type == 0x0806) {
-        const char *arp_attack = detect_arp_spoof(packet, length);
-        if (arp_attack && length >= 42) {
-            /* Extrai sender IP do ARP reply (offset 14+14=28) para o collector */
+        const char *arp_attack = detect_arp_spoof(packet, length, l3_off);
+        if (arp_attack && length - l3_off >= 28) {
+            /* Extrai sender IP do ARP reply (l3_off + 14) para o collector */
             struct in_addr arp_sender;
             char           arp_str[INET_ADDRSTRLEN];
-            memcpy(&arp_sender.s_addr, packet + 28, 4);
+            memcpy(&arp_sender.s_addr, packet + l3_off + 14, 4);
             inet_ntop(AF_INET, &arp_sender, arp_str, sizeof(arp_str));
             collector_record(arp_attack, arp_str, now);
         }
@@ -1026,9 +1134,9 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
      * contra `length` antes de ser lido (parse_ipv4 / parse_ipv6). */
     IpPkt pkt;
     if (ether_type == 0x0800) {
-        if (!parse_ipv4(packet, length, &pkt)) return 0;
+        if (!parse_ipv4(packet, length, l3_off, &pkt)) return 0;
     } else if (ether_type == 0x86DD) {
-        if (!parse_ipv6(packet, length, &pkt)) return 0;
+        if (!parse_ipv6(packet, length, l3_off, &pkt)) return 0;
     } else {
         return 0;
     }
@@ -1051,7 +1159,7 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
     int is_v6 = (pkt.src.family == AF_INET6);
     if ((!is_v6 && pkt.proto == NTA_PROTO_ICMP) ||
         ( is_v6 && pkt.proto == NTA_PROTO_ICMPV6)) {
-        if (is_v6 && pkt.l4_len < (int)sizeof(nta_icmpv6_hdr)) return 0;
+        if (is_v6 && l4_short(&pkt, (int)sizeof(nta_icmpv6_hdr))) return 0;
 
         update_baseline(&s->baseline, 0, 0, now);
 
@@ -1076,7 +1184,7 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
      * TCP: Stealth Scan, SYN Flood, Brute Force, Port Scan                *
      * ------------------------------------------------------------------- */
     if (pkt.proto == NTA_PROTO_TCP) {
-        if (pkt.l4_len < (int)sizeof(nta_tcp_hdr)) return 0;
+        if (l4_short(&pkt, (int)sizeof(nta_tcp_hdr))) return 0;
         const nta_tcp_hdr *tcp  = (const nta_tcp_hdr *)pkt.l4;
         uint16_t       dst_port = ntohs(tcp->dport);
         uint8_t        flags    = tcp->flags;
@@ -1111,7 +1219,7 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
      * UDP: DNS Tunneling, DDoS Amplification                              *
      * ------------------------------------------------------------------- */
     if (pkt.proto == NTA_PROTO_UDP) {
-        if (pkt.l4_len < (int)sizeof(nta_udp_hdr)) return 0;
+        if (l4_short(&pkt, (int)sizeof(nta_udp_hdr))) return 0;
         const nta_udp_hdr *udp  = (const nta_udp_hdr *)pkt.l4;
         uint16_t       src_port = ntohs(udp->sport);
         uint16_t       dst_port = ntohs(udp->dport);

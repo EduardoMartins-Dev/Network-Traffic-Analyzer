@@ -24,6 +24,14 @@
 
 #define NTA_ETH_HLEN      14
 
+/* Tags VLAN depois dos MACs: 802.1Q (0x8100) e 802.1ad/QinQ (0x88A8). Cada tag
+ * tem 4 bytes: TCI (2) + EtherType seguinte (2). Acima de NTA_VLAN_MAX_TAGS
+ * tags empilhadas o quadro é descartado (B10). */
+#define NTA_ETH_TYPE_VLAN  0x8100
+#define NTA_ETH_TYPE_QINQ  0x88A8
+#define NTA_VLAN_TAG_LEN   4
+#define NTA_VLAN_MAX_TAGS  4
+
 /* Os cabeçalhos começam em offsets não alinhados do buffer do pcap (IPv4 no
  * byte 14): `packed` faz o compilador gerar acesso desalinhado seguro —
  * sem isso o cast é comportamento indefinido (e falha em ARM estrito). */
@@ -57,6 +65,11 @@ typedef struct {
 } NTA_PACKED nta_ipv4_hdr;
 
 #define NTA_IPV4_HLEN(h)  (((h)->ver_ihl & 0x0F) * 4)
+
+/* frag_off do IPv4: DF (0x4000), MF (0x2000) e offset em unidades de 8 bytes
+ * (13 bits baixos). Fragmento = MF ou offset != 0 (B10). Aplique após ntohs. */
+#define NTA_IPV4_FRAG_ANY    0x3FFFu
+#define NTA_IPV4_FRAG_OFFSET 0x1FFFu
 
 typedef struct {
     uint16_t sport;

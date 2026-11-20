@@ -3,7 +3,19 @@
 
 #include <sys/types.h>   /* u_char (necessário antes de pcap.h no Fedora/glibc) */
 #include <pcap.h>
+#include <stdint.h>
 #include <time.h>
+
+/* Contadores de VLAN e fragmentação (B10). Zerados por analyzer_reset(). Lidos
+ * pelo metrics_thread com analyzer_get_stats(): cada campo é atômico, mas os três
+ * juntos não formam um instantâneo exato (são telemetria). */
+typedef struct {
+    uint64_t vlan_frames;     /* quadros com ao menos uma tag 802.1Q/802.1ad */
+    uint64_t frag_seen;       /* fragmentos IPv4 e IPv6 vistos (inclui o inicial) */
+    uint64_t frag_discarded;  /* fragmentos fora da análise L4: não inicial, ou L4 que não cabe */
+} analyzer_stats_t;
+
+void analyzer_get_stats(analyzer_stats_t *out);
 
 /* `now` é o timestamp do pacote (pcap_pkthdr.ts), não o relógio de parede —
  * assim janelas (brute force, EWMA, kill chain) valem também no replay. */
