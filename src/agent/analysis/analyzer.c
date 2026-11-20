@@ -614,7 +614,8 @@ static const char *detect_dns_tunnel(Suspect *s, const unsigned char *dns_payloa
  * @brief Detecta DDoS Amplification por ratio de bytes response/request.
  *
  * Quando as respostas DNS de um IP excedem 10x os requests, o IP está
- * sendo usado como refletor/amplificador.
+ * sendo usado como refletor/amplificador. O request entra no Suspect de quem
+ * consulta (origem) e no do servidor consultado (destino, ver analyze_packet).
  */
 static const char *detect_amplification(Suspect *s, int bytes, int is_response) {
     if (is_response) s->dns_resp_bytes += bytes;
@@ -839,6 +840,11 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
         uint16_t       dst_port = ntohs(udp->dport);
         int            is_dns   = (src_port == 53 || dst_port == 53);
 
+        /* Por padrão o alerta sai pela origem. Uma consulta pode disparar
+         * AMPLIFICATION no servidor (destino): aí o alerta usa o IP dele. */
+        Suspect       *report      = s;
+        struct in_addr report_addr = src_addr;
+
         update_baseline(&s->baseline, 0, is_dns, now);
 
         if (is_dns) {
@@ -853,17 +859,34 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
                     attack = detect_dns_tunnel(s, dns_payload, dns_len);
                 if (!attack)
                     attack = detect_amplification(s, length, is_response);
+
+                /* Consulta: o request também conta no servidor (IP de destino),
+                 * que é quem envia as respostas grandes. Sem isso, um refletor
+                 * que só responde nunca tem request no próprio Suspect. Destino
+                 * em HOME_NET não é avaliado (mesmo critério da origem). */
+                if (!is_response && dst_port == 53 && ip_header->daddr != src_ip &&
+                    !is_home_ip(ip_header->daddr)) {
+                    Suspect *srv = find_or_create_suspect(ip_header->daddr, now);
+                    if (srv) {
+                        const char *srv_attack = detect_amplification(srv, length, 0);
+                        if (!attack && srv_attack) {
+                            attack             = srv_attack;
+                            report             = srv;
+                            report_addr.s_addr = ip_header->daddr;
+                        }
+                    }
+                }
             }
         }
 
         if (attack) {
-            advance_kill_chain(s, attack, now);
-            collector_record(attack, inet_ntoa(src_addr), now);
+            advance_kill_chain(report, attack, now);
+            collector_record(attack, inet_ntoa(report_addr), now);
         }
 
-        publish_packet(inet_ntoa(src_addr), dst_port, "UDP", length,
+        publish_packet(inet_ntoa(report_addr), dst_port, "UDP", length,
                        attack ? 1 : 0, attack,
-                       kc_stage_name[s->kc_stage], s->kc_score,
+                       kc_stage_name[report->kc_stage], report->kc_score,
                        attack ? attack_to_mitre(attack) : "");
         return attack ? 1 : 0;
     }
