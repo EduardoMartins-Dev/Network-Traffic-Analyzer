@@ -83,3 +83,27 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang")
     target_link_options(fuzz_rules PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_libraries(fuzz_rules PRIVATE ${FUZZ_LIBS})
 endif()
+
+# B17: parser EVE do nta-eve-bridge (eve_parse, eve_map, eve_tail) e leitor de
+# linhas. Mesmo esquema: fuzz_eve (libFuzzer, clang) e fuzz_eve_replay (driver
+# com gcc/clang e ASan/UBSan, roda corpus ou crash-* salvos).
+set(EVE_SRC
+        ${NTA_ROOT}/src/bridge/eve_parse.c
+        ${NTA_ROOT}/src/bridge/eve_map.c
+        ${NTA_ROOT}/src/bridge/eve_tail.c
+        ${NTA_ROOT}/third_party/cjson/cJSON.c)
+set(EVE_INC ${NTA_ROOT}/include/bridge ${NTA_ROOT}/third_party/cjson)
+
+add_executable(fuzz_eve_replay replay_main.c fuzz_eve.c ${EVE_SRC})
+target_include_directories(fuzz_eve_replay PRIVATE ${EVE_INC})
+target_compile_options(fuzz_eve_replay PRIVATE ${FUZZ_SAN_FLAGS})
+target_link_options(fuzz_eve_replay PRIVATE -fsanitize=address,undefined)
+target_link_libraries(fuzz_eve_replay PRIVATE m)
+
+if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    add_executable(fuzz_eve fuzz_eve.c ${EVE_SRC})
+    target_include_directories(fuzz_eve PRIVATE ${EVE_INC})
+    target_compile_options(fuzz_eve PRIVATE -fsanitize=fuzzer ${FUZZ_SAN_FLAGS})
+    target_link_options(fuzz_eve PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_libraries(fuzz_eve PRIVATE m)
+endif()

@@ -269,3 +269,43 @@ if(NTA_BUILD_BENCH)
         target_link_libraries(bench_pps PRIVATE m Threads::Threads)
     endif()
 endif()
+
+# --- B17: nta-eve-bridge (ponte EVE do Suricata, processo auxiliar do agente) ---
+# Só POSIX: segue o eve.json com stat/inode (rotação). Reusa o publisher AMQP e
+# o config do agente; o único símbolo extra é o stub de pipeline_push_event.
+option(NTA_BUILD_BRIDGE "Compila o nta-eve-bridge (B17, POSIX)" ON)
+if(NTA_BUILD_BRIDGE AND NOT WIN32)
+    set(BRIDGE_INC ${CMAKE_SOURCE_DIR}/include/bridge)
+    add_executable(nta-eve-bridge
+            src/bridge/main.c
+            src/bridge/eve_parse.c
+            src/bridge/eve_map.c
+            src/bridge/eve_agg.c
+            src/bridge/eve_tail.c
+            src/bridge/eve_stubs.c
+            src/agent/output/publisher.c
+            src/agent/analysis/collector.c
+            src/agent/core/config.c
+            ${CJSON_DIR}/cJSON.c
+    )
+    target_include_directories(nta-eve-bridge PRIVATE ${AGENT_INC} ${BRIDGE_INC})
+    target_link_libraries(nta-eve-bridge PRIVATE rabbitmq m Threads::Threads)
+
+    if(NTA_BUILD_TESTS)
+        add_executable(test_eve_bridge tests/unit/test_eve_bridge.c
+                src/bridge/eve_parse.c src/bridge/eve_map.c src/bridge/eve_agg.c
+                src/bridge/eve_tail.c ${CJSON_DIR}/cJSON.c)
+        target_include_directories(test_eve_bridge PRIVATE ${AGENT_INC} ${BRIDGE_INC})
+        target_link_libraries(test_eve_bridge PRIVATE m)
+        add_test(NAME test_eve_bridge COMMAND test_eve_bridge
+            ${CMAKE_SOURCE_DIR}/deploy/eve-bridge.mapping.json)
+
+        # Saída do --dry-run sobre tests/eve/sample-alerts.json (golden).
+        add_test(NAME test_eve_dryrun COMMAND ${CMAKE_COMMAND}
+            -DBRIDGE_EXE=$<TARGET_FILE:nta-eve-bridge>
+            -DEVE_DIR=${CMAKE_SOURCE_DIR}/tests/eve
+            -DMAPPING=${CMAKE_SOURCE_DIR}/deploy/eve-bridge.mapping.json
+            -DWORK_DIR=${CMAKE_BINARY_DIR}/eve_dryrun
+            -P ${CMAKE_SOURCE_DIR}/tests/unit/eve_dryrun.cmake)
+    endif()
+endif()
