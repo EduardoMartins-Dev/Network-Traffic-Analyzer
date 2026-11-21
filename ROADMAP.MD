@@ -15,6 +15,8 @@ Captura→Mensageria→Agent/Server→IDS Engine→Multi-Thr→DX+LLM-Tools→AI
 > **Nota de revisão 2026-05-12:** v7.0 entregue (commit `6aa9b97`). v8.0 (Threat Intelligence) entregue em 4 milestones: GeoLite2-ASN, IoC framework, AbuseIPDB enricher + dual-trigger narrator, WHOIS nativo. M2 (cache TTL genérico) skip — cada módulo inline a própria hashtable, refactor pra módulo comum só se M de v9+ exigir.
 >
 > **Nota de revisão 2026-11-21:** em `main`, sem tag, duas entregas de fase 1. **Ponte EVE do Suricata** (`nta-eve-bridge`, PR #47): lê o `eve.json` e publica na `traffic_queue`; só POSIX; validada só com EVE de exemplo, sem Suricata real. **Limiares dos detectores em JSON** (`AGENT_RULES_FILE`, PR #48): ajusta limiares, janelas e alfas dos detectores existentes, sem regras novas e sem recarga por SIGHUP. Fases seguintes pendentes: na ponte, persistência de offset e socket Unix; nos limiares, regras novas e recarga por sinal.
+>
+> **Nota de revisão 2026-11-21 (pós-v8.1.1, em `main`, sem tag):** IPv6 no agente (B09, PR #31) e no servidor (B33, PR #35); VLAN/QinQ e fragmentação IPv4 no agente (B10, PR #36, com descarte e contagem e sem remontagem); export SIEM CEF/ECS (B11, PR #42); CI macOS e FreeBSD, ambos bloqueantes (B15, PRs #38 e #44).
 
 ---
 
@@ -186,10 +188,10 @@ Captura→Mensageria→Agent/Server→IDS Engine→Multi-Thr→DX+LLM-Tools→AI
 
 ## Próximas versões
 
-### v5.1 — Validação Windows (pausada)
+### v5.1 — Validação Windows ✅ (entregue na v8.1.0)
 
 > **Confirmar suporte multiplataforma com as novas features.**
-> Status: pausada por falta de máquina Windows física para teste — será retomada quando houver acesso a um host Windows.
+> Status: pausada por falta de máquina Windows física (histórico); entregue na v8.1.0 como agente nativo no Windows (MSYS2/MinGW-w64, Windows Service e instalador). A lista abaixo é o plano original.
 
 * Compilar v4+v5 com MinGW-w64 / Visual Studio no Windows
 * Validar captura via Npcap + análise multi-thread em ambiente real
