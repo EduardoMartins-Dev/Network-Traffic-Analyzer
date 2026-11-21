@@ -194,6 +194,20 @@ if(NTA_BUILD_TESTS)
         add_test(NAME test_export COMMAND test_export)
     endif()
 
+    # Precisão dos floats no line protocol do InfluxDB (nta_influx.c). Usa a
+    # API real com um servidor HTTP de loopback, então precisa de libcurl e
+    # libmaxminddb (nta_geoip.c): só com NTA_BUILD_SERVER e fora do Windows.
+    if(NOT WIN32 AND NTA_BUILD_SERVER)
+        add_executable(test_influx tests/unit/test_influx.c
+                src/server/nta_influx.c src/server/nta_geoip.c
+                src/server/nta_ioc.c src/server/nta_abuse.c ${CJSON_DIR}/cJSON.c)
+        target_include_directories(test_influx PRIVATE ${SERVER_INC}
+                ${LIBCURL_INCLUDE_DIRS} ${LIBMAXMINDDB_INCLUDE_DIRS})
+        target_link_libraries(test_influx PRIVATE Threads::Threads
+                ${LIBCURL_LIBRARIES} ${LIBMAXMINDDB_LIBRARIES})
+        add_test(NAME test_influx COMMAND test_influx)
+    endif()
+
     # Replay de arquivo único com gabarito vazio/não vazio (rc do binário).
     # Só fora do Windows: o binário exige o Npcap, ausente no runner do CI.
     if(NOT WIN32)

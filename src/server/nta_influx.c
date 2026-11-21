@@ -22,6 +22,7 @@
 #include <stdbool.h>
 
 #define LP_BUF_SIZE   16384   /* comporta ~50 events por batch v5.0 */
+#define LP_FLOAT_BUF     32   /* cabe o maior "%.17g" (24 chars) */
 #define MAX_TAG_LEN     128
 #define MAX_URL_LEN     512
 
@@ -73,6 +74,16 @@ static size_t lp_escape(char *out, size_t cap, const char *in) {
 /* -------------------------------------------------------------------------- *
  * cJSON helpers                                                              *
  * -------------------------------------------------------------------------- */
+/* Formata um double para line protocol sem perder precisão. Tenta "%.15g"
+ * (forma curta: 0.1 sai "0.1") e usa "%.17g" só quando a forma curta não volta
+ * ao mesmo double (12345678.5 sai inteiro, não "1.23457e+07"). nan/inf saem
+ * como antes ("nan"/"inf"): o código nunca tratou esses casos. */
+static void fmt_lp_float(char *out, size_t cap, double v) {
+    int n = snprintf(out, cap, "%.15g", v);
+    if (n < 0 || (size_t)n >= cap || strtod(out, NULL) != v)
+        snprintf(out, cap, "%.17g", v);
+}
+
 static const char *json_get_str(const cJSON *obj, const char *key,
                                 const char *fallback) {
     const cJSON *v = cJSON_GetObjectItemCaseSensitive(obj, key);
@@ -128,6 +139,8 @@ static int build_traffic_point(char *out, size_t cap,
 
     double kc_score = 0;
     bool has_kc = json_get_num(evt, "kc_score", &kc_score);
+
+    char f_bytes[LP_FLOAT_BUF], f_scan[LP_FLOAT_BUF], f_kc[LP_FLOAT_BUF];
 
     /* Nota: `port` vai como inteiro (sufixo 'i') pra bater com o client Python
      * que usa Point.field("port", int(...)). bytes/is_scan vão como float. */
@@ -187,14 +200,17 @@ static int build_traffic_point(char *out, size_t cap,
         }
     }
 
+    fmt_lp_float(f_bytes, sizeof(f_bytes), bytes_d);
+    fmt_lp_float(f_scan, sizeof(f_scan), is_scan_d);
     n = snprintf(out + w, cap - w,
-        " port=%lldi,bytes=%.6g,is_scan=%.6g",
-        (long long)port_d, bytes_d, is_scan_d);
+        " port=%lldi,bytes=%s,is_scan=%s",
+        (long long)port_d, f_bytes, f_scan);
     if (n <= 0 || (size_t)n >= cap - w) return 0;
     w += n;
 
     if (has_kc) {
-        n = snprintf(out + w, cap - w, ",kc_score=%.6g", kc_score);
+        fmt_lp_float(f_kc, sizeof(f_kc), kc_score);
+        n = snprintf(out + w, cap - w, ",kc_score=%s", f_kc);
         if (n <= 0 || (size_t)n >= cap - w) return 0;
         w += n;
     }
@@ -375,12 +391,14 @@ int nta_influx_write_metrics(NtaInflux *inf, const char *body, size_t len,
 
     int field_count = 0;
     char esc_key[MAX_TAG_LEN];
+    char f_val[LP_FLOAT_BUF];
     cJSON *iter = NULL;
     cJSON_ArrayForEach(iter, root) {
         if (!cJSON_IsNumber(iter) || !iter->string) continue;
         lp_escape(esc_key, sizeof(esc_key), iter->string);
-        n = snprintf(lp + w, sizeof(lp) - w, "%s%s=%.6g",
-                     field_count == 0 ? "" : ",", esc_key, iter->valuedouble);
+        fmt_lp_float(f_val, sizeof(f_val), iter->valuedouble);
+        n = snprintf(lp + w, sizeof(lp) - w, "%s%s=%s",
+                     field_count == 0 ? "" : ",", esc_key, f_val);
         if (n <= 0 || (size_t)n >= sizeof(lp) - w) break;
         w += (size_t)n;
         field_count++;
@@ -484,11 +502,13 @@ int nta_influx_write_narrative(NtaInflux *inf,
     char *lp = malloc(lp_cap);
     if (!lp) { free(esc_narr); if (root) cJSON_Delete(root); return -1; }
 
+    char f_kc[LP_FLOAT_BUF];
+    fmt_lp_float(f_kc, sizeof(f_kc), kc_score);
     int n = snprintf(lp, lp_cap,
         "incident_narrative,agent_id=%s,src_ip=%s,attack_type=%s,"
-        "kill_chain_stage=%s,backend=%s narrative=\"%s\",kc_score=%.6g\n",
+        "kill_chain_stage=%s,backend=%s narrative=\"%s\",kc_score=%s\n",
         esc_agent, esc_ip, esc_attack, esc_stage, esc_backend,
-        esc_narr, kc_score);
+        esc_narr, f_kc);
 
     free(esc_narr);
     if (root) cJSON_Delete(root);
