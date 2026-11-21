@@ -63,15 +63,20 @@ Datasource Grafana: type=influxdb, uid=influxdb-nta, language=Flux, bucket=netwo
 Measurements:
   - traffic              tags: agent_id, src_ip, protocol (TCP|UDP|ICMP), attack_type
                                (NONE|PORT_SCAN|SYN_FLOOD|ICMP_FLOOD|NULL_SCAN|XMAS_SCAN|
-                                SYN_FIN_SCAN|BRUTE_FORCE|DNS_TUNNEL|ARP_SPOOF|DDOS_AMP),
+                                SYNFIN_SCAN|BRUTE_FORCE|DNS_TUNNEL|ARP_SPOOF|AMPLIFICATION),
                                kill_chain_stage (IDLE|RECON|EXPLOIT|EXFIL|COMPLETE),
-                               mitre (T1046, T1110, T1071.004, T1498, T1557, ...)
-                          fields: port, bytes, is_scan (0|1), kc_score (0-100), lat, lon
+                               mitre (T1046, T1110, T1071.004, T1498, T1557, ...),
+                               asn (AS15169, ...), asn_org, ioc_hit (1, só com match),
+                               ioc_source (lista do IoC que casou)
+                          fields: port, bytes, is_scan (0|1), kc_score (0-100),
+                                  abuse_score (0-100, ausente sem dado), lat, lon
 
   - pipeline_metrics     tags: agent_id
                           fields: rb_pkt_depth, rb_evt_depth, rb_pkt_overflow,
                                   rb_evt_overflow, batches_sent, events_sent,
-                                  events_per_sec
+                                  events_per_sec, vlan_frames, frag_seen, frag_discarded
+
+  - nta_pool             fields: pool_size, backlog, unacked, consumers (int)
 
   - incident_narrative   tags: agent_id, src_ip, attack_type, kill_chain_stage, backend
                           fields: narrative (string), kc_score

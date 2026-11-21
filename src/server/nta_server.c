@@ -1,16 +1,16 @@
 /* ========================================================================= *
  *  nta-server — servidor em C (substituto do antigo ingestor Python).       *
  *                                                                           *
- *  Responsabilidades (completas na v7.0):                                   *
- *    1. Consome traffic_queue (N workers, 1 conn AMQP cada)                 *
- *    2. Enriquece com GeoIP offline via libmaxminddb                        *
+ *  Responsabilidades:                                                       *
+ *    1. Pool de workers consome traffic_queue (1 conn AMQP cada)            *
+ *    2. Enriquece com GeoIP (libmaxminddb), IoC, AbuseIPDB e WHOIS         *
  *    3. Grava line protocol no InfluxDB via libcurl                         *
  *    4. Republica eventos críticos (kc_score >= N) em narrator_queue        *
- *    5. Consome traffic_metrics (worker dedicado → pipeline_metrics)        *
+ *    5. Thread fixa consome traffic_metrics (→ pipeline_metrics)            *
+ *    6. Opcionais: narrator (LLM), exportação SIEM e scaler. /health sempre  *
  *                                                                           *
- *  Esta etapa (1) entrega APENAS o esqueleto: parse de config + signal      *
- *  handling + shutdown limpo. Lógica AMQP/Influx/GeoIP vem nas etapas       *
- *  seguintes.                                                               *
+ *  main() abre os módulos, sobe o pool e as threads de apoio e espera       *
+ *  SIGINT/SIGTERM para um shutdown limpo. SIGHUP recarrega o IoC.           *
  * ========================================================================= */
 
 #include <stdio.h>

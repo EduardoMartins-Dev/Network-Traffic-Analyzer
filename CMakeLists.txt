@@ -239,6 +239,14 @@ if(NTA_BUILD_TESTS)
             -DPCAP_DIR=${CMAKE_SOURCE_DIR}/tests/pcaps
             -DWORK_DIR=${CMAKE_BINARY_DIR}/replay_gabarito_vazio
             -P ${CMAKE_SOURCE_DIR}/tests/unit/replay_gabarito_vazio.cmake)
+
+        # --report do --replay-dir: um nome de pcap por entrada (antes todas
+        # apontavam para o último pcap, por ponteiro para buffer reutilizado).
+        add_test(NAME test_replay_report COMMAND ${CMAKE_COMMAND}
+            -DNTA_EXE=$<TARGET_FILE:NetworkTrafficAnalyzer>
+            -DPCAP_DIR=${CMAKE_SOURCE_DIR}/tests/pcaps
+            -DWORK_DIR=${CMAKE_BINARY_DIR}/replay_report
+            -P ${CMAKE_SOURCE_DIR}/tests/unit/replay_report.cmake)
     endif()
 endif()
 
@@ -300,7 +308,7 @@ if(NTA_BUILD_BRIDGE AND NOT WIN32)
         add_test(NAME test_eve_bridge COMMAND test_eve_bridge
             ${CMAKE_SOURCE_DIR}/deploy/eve-bridge.mapping.json)
 
-        # Saída do --dry-run sobre tests/eve/sample-alerts.json (golden).
+        # Saída do --dry-run sobre tests/eve/eve-sample.json (golden).
         add_test(NAME test_eve_dryrun COMMAND ${CMAKE_COMMAND}
             -DBRIDGE_EXE=$<TARGET_FILE:nta-eve-bridge>
             -DEVE_DIR=${CMAKE_SOURCE_DIR}/tests/eve

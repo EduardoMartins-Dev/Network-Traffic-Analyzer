@@ -25,7 +25,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define VERSION_STR    "v8.0"
+#define VERSION_STR    "v8.1.1"
 #define REQ_BUF        2048
 #define RESP_BUF       4096
 
