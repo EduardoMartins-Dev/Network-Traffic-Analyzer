@@ -12,6 +12,13 @@
 #include "dns_log.h"
 #include "nta_net.h"          /* inet_pton / AF_INET, para montar os endereços */
 
+/* FreeBSD não inclui <sys/socket.h> por <arpa/inet.h>: explícito (CI). */
+#ifndef _WIN32
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#endif
+
 #include <stdlib.h>
 #include <string.h>
 

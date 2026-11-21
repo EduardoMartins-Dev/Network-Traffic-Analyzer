@@ -27,10 +27,13 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 set(NTA_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 
-# Só o parser: analyzer.c + collector.c. publish_packet é stub no harness.
+# Só o parser: analyzer.c + collector.c + dns_log.c (B16: o analyzer chama o
+# log de DNS) e ringbuf.c (usado pelo dns_log). publish_packet é stub no harness.
 set(FUZZ_SRC
         ${NTA_ROOT}/src/agent/analysis/analyzer.c
-        ${NTA_ROOT}/src/agent/analysis/collector.c)
+        ${NTA_ROOT}/src/agent/analysis/collector.c
+        ${NTA_ROOT}/src/agent/analysis/protocols/dns_log.c
+        ${NTA_ROOT}/src/agent/core/ringbuf.c)
 set(FUZZ_INC ${NTA_ROOT}/include/agent)
 
 set(FUZZ_SAN_FLAGS -fsanitize=address,undefined -fno-sanitize-recover=all

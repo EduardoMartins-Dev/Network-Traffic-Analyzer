@@ -6,6 +6,10 @@
 #include "collector.h"
 #include "dns_log.h"
 #include "nta_net.h"
+#ifndef _WIN32
+#include <sys/socket.h>   /* AF_INET/AF_INET6 no FreeBSD (CI) */
+#include <arpa/inet.h>
+#endif
 
 #include <stdint.h>
 #include <stdlib.h>

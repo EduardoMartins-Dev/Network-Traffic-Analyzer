@@ -18,6 +18,7 @@
 #  include <winsock2.h>
 #  include <ws2tcpip.h>
 #else
+#  include <sys/socket.h>   /* AF_INET/AF_INET6 no FreeBSD (não vêm por arpa/inet.h) */
 #  include <arpa/inet.h>
 #  include <netinet/in.h>
 #endif
