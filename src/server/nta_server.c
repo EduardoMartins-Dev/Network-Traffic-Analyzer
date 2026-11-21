@@ -68,6 +68,9 @@ void nta_config_load(NtaConfig *cfg) {
     cfg->queue_name      = env_or("QUEUE_NAME",      "traffic_queue");
     cfg->metrics_queue   = env_or("METRICS_QUEUE",   "traffic_metrics");
     cfg->narrator_queue  = env_or("NARRATOR_QUEUE",  "narrator_queue");
+    /* B16: consumidor de protocol_queue só existe com PROTO_QUEUE definida (ex.:
+     * protocol_queue, igual ao AGENT_PROTO_QUEUE do agente). Vazio = desligado. */
+    cfg->proto_queue     = env_or("PROTO_QUEUE",     "");
 
     cfg->narrator_min_score = env_int("NARRATOR_MIN_SCORE", 80);
 
@@ -108,6 +111,9 @@ void nta_config_print(const NtaConfig *cfg) {
         cfg->geoip_db_path, cfg->geoip_asn_db_path,
         cfg->ioc_path,
         cfg->num_workers);
+    if (cfg->proto_queue[0])
+        fprintf(stderr, "    Proto     queue=%s (logs DNS do agente, B16)\n",
+                cfg->proto_queue);
 }
 
 /* -------------------------------------------------------------------------- *
@@ -362,6 +368,54 @@ static void *metrics_worker_main(void *arg) {
 
     nta_influx_close(&w->influx);
     fprintf(stderr, "[METRICS] encerrado.\n");
+    return NULL;
+}
+
+/* -------------------------------------------------------------------------- *
+ * Worker dedicado de protocol_queue (B16, PR a): logs de DNS do agente. Só   *
+ * existe com PROTO_QUEUE definida. Conn AMQP e handle Influx próprios: não   *
+ * mexe no caminho de traffic_queue. A fila é declarada pelo nta_amqp_open,   *
+ * com os mesmos argumentos do publisher do agente (idempotente).             *
+ * -------------------------------------------------------------------------- */
+typedef struct {
+    NtaInflux     *inf;
+    unsigned long  skipped;      /* itens ignorados (tipo/versão/campo inválido) */
+} ProtoCtx;
+
+static void proto_handler(const char *body, size_t len,
+                          const char *agent_id, void *user_ctx) {
+    ProtoCtx *ctx = (ProtoCtx *)user_ctx;
+    unsigned  skipped = 0;
+    if (nta_influx_write_proto(ctx->inf, body, len, agent_id, &skipped) != 0) {
+        fprintf(stderr, "[PROTO] descarte agent=%s len=%zu\n", agent_id, len);
+    }
+    if (skipped) {
+        ctx->skipped += skipped;
+        fprintf(stderr, "[PROTO] ignorados: %u (tipo/versao desconhecidos ou "
+                "campos invalidos; total %lu)\n", skipped, ctx->skipped);
+    }
+}
+
+static void *proto_worker_main(void *arg) {
+    Worker *w = (Worker *)arg;
+
+    if (nta_influx_open(&w->influx, w->cfg) != 0) {
+        fprintf(stderr, "[PROTO] InfluxDB open falhou\n");
+        return NULL;
+    }
+    ProtoCtx ctx = { .inf = &w->influx, .skipped = 0 };
+    while (nta_amqp_open_retry(&w->amqp, w->cfg, w->cfg->proto_queue, 5,
+                               NULL, "PROTO") == 0) {
+        fprintf(stderr, "[PROTO] pronto (queue=%s).\n", w->cfg->proto_queue);
+        int rc = nta_amqp_consume_loop(&w->amqp, w->cfg->proto_queue,
+                                       proto_handler, &ctx, NULL);
+        nta_amqp_close(&w->amqp);
+        if (rc == 0) break;
+        fprintf(stderr, "[PROTO] reconectando...\n");
+    }
+
+    nta_influx_close(&w->influx);
+    fprintf(stderr, "[PROTO] encerrado.\n");
     return NULL;
 }
 
@@ -687,6 +741,16 @@ int main(int argc, char *argv[]) {
                                       metrics_worker_main, &metrics_w) == 0);
     if (!metrics_ok) fprintf(stderr, "[METRICS] pthread_create falhou\n");
 
+    /* Worker de protocol_queue (B16): só com PROTO_QUEUE definida. */
+    Worker proto_w = { .worker_id = -3, .cfg = &cfg, .geo = NULL };
+    pthread_t proto_tid;
+    int proto_ok = 0;
+    if (cfg.proto_queue[0]) {
+        proto_ok = (pthread_create(&proto_tid, NULL,
+                                    proto_worker_main, &proto_w) == 0);
+        if (!proto_ok) fprintf(stderr, "[PROTO] pthread_create falhou\n");
+    }
+
     /* Narrator worker (thread fixa, fora do pool, opcional). */
     Worker narrator_w = { .worker_id = -2, .cfg = &cfg, .geo = NULL,
                           .whois = whois, .ncfg = &ncfg };
@@ -738,6 +802,7 @@ int main(int argc, char *argv[]) {
     pool_join_all(&pool);
     nta_export_close(exp, NULL);   /* workers já pararam: nada mais é submetido */
     if (metrics_ok)  pthread_join(metrics_tid,  NULL);
+    if (proto_ok)    pthread_join(proto_tid,    NULL);
     if (narrator_ok) pthread_join(narrator_tid, NULL);
     if (scaler_ok)   pthread_join(scaler_tid,   NULL);
     if (ioc_reload_ok) {

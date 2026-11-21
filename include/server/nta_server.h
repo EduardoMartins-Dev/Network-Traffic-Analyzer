@@ -24,6 +24,7 @@ typedef struct {
     const char *queue_name;
     const char *metrics_queue;
     const char *narrator_queue;
+    const char *proto_queue;         /* logs de DNS do agente (B16); "" = desligado */
 
     /* Narrator */
     int narrator_min_score;

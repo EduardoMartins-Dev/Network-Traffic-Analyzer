@@ -543,6 +543,174 @@ int nta_influx_write_pool(NtaInflux *inf,
 }
 
 /* -------------------------------------------------------------------------- *
+ * proto_dns (B16, PR a): logs de DNS do agente, vindos da protocol_queue.    *
+ * Ver nta_influx.h para o schema. qname/IP são fields, nunca tags.           *
+ * -------------------------------------------------------------------------- */
+#define PROTO_LINE_MAX  1536            /* um registro: qname (≤512 escapado) + IPs + tags */
+#define PROTO_ACC_CAP   65536           /* um POST junta vários registros até este tamanho */
+#define PROTO_TS_MAX    9000000000000.0 /* ms: além disso o ns estoura int64 */
+
+static const char *proto_qtype_name(long qt) {
+    switch (qt) {
+    case 1:   return "A";
+    case 2:   return "NS";
+    case 5:   return "CNAME";
+    case 6:   return "SOA";
+    case 12:  return "PTR";
+    case 15:  return "MX";
+    case 16:  return "TXT";
+    case 28:  return "AAAA";
+    case 33:  return "SRV";
+    case 64:  return "SVCB";
+    case 65:  return "HTTPS";
+    case 255: return "ANY";
+    default:  return "OTHER";   /* tipo fora da lista: tag com cardinalidade fixa */
+    }
+}
+
+/* Inteiro JSON dentro de [lo, hi]. NaN e fracionário são rejeitados. */
+static int json_int_in(const cJSON *obj, const char *key, double lo, double hi,
+                       long *out) {
+    const cJSON *v = cJSON_GetObjectItemCaseSensitive(obj, key);
+    if (!cJSON_IsNumber(v)) return 0;
+    double d = v->valuedouble;
+    if (!(d >= lo && d <= hi)) return 0;   /* também pega NaN */
+    if (d != (double)(long)d) return 0;
+    *out = (long)d;
+    return 1;
+}
+
+/* Campo string de line protocol: \ e " escapados; qualquer byte fora de
+ * 0x20..0x7E vira '?' (nem quebra de linha nem UTF-8 inválido chega ao Influx).
+ * Retorna o tamanho escrito ou -1 se não couber. */
+static int lp_field_str(char *out, size_t cap, const char *in) {
+    if (cap < 3) return -1;
+    size_t w = 0;
+    out[w++] = '"';
+    for (const unsigned char *p = (const unsigned char *)in; *p; p++) {
+        char e[2];
+        size_t n = 1;
+        if (*p == '"' || *p == '\\') {
+            e[0] = '\\'; e[1] = (char)*p; n = 2;
+        } else if (*p < 0x20 || *p > 0x7E) {
+            e[0] = '?';
+        } else {
+            e[0] = (char)*p;
+        }
+        if (w + n + 2 > cap) return -1;     /* +2: aspa final e NUL */
+        memcpy(out + w, e, n);
+        w += n;
+    }
+    out[w++] = '"';
+    out[w] = '\0';
+    return (int)w;
+}
+
+size_t nta_influx_proto_line(const cJSON *evt, const char *agent_id,
+                             char *out, size_t cap) {
+    if (!out || cap < 64 || !cJSON_IsObject(evt)) return 0;
+
+    /* Discriminador e versão: só aceita o que o schema 1 define. */
+    const cJSON *et = cJSON_GetObjectItemCaseSensitive(evt, "event_type");
+    const cJSON *sv = cJSON_GetObjectItemCaseSensitive(evt, "schema_version");
+    if (!cJSON_IsString(et) || strcmp(et->valuestring, "dns") != 0) return 0;
+    if (!cJSON_IsNumber(sv) || sv->valuedouble != 1.0) return 0;
+
+    const char *proto = json_get_str(evt, "proto",  NULL);
+    const char *src   = json_get_str(evt, "src_ip", NULL);
+    const char *dst   = json_get_str(evt, "dst_ip", NULL);
+    const char *qname = json_get_str(evt, "qname",  NULL);
+    if (!proto || !src || !dst || !qname) return 0;
+    if (strcmp(proto, "UDP") != 0 && strcmp(proto, "TCP") != 0) return 0;
+    if (strlen(src) > 45 || strlen(dst) > 45 || strlen(qname) > 255) return 0;
+
+    long qtype = 0, rcode = 0, resp = 0, bytes = 0, hashed = 0;
+    if (!json_int_in(evt, "qtype", 0, 65535, &qtype)) return 0;
+    if (!json_int_in(evt, "rcode", 0, 15, &rcode))    return 0;
+    if (!json_int_in(evt, "resp",  0, 1, &resp))     return 0;
+    if (!json_int_in(evt, "bytes", 0, 65535, &bytes)) return 0;
+    if (cJSON_GetObjectItemCaseSensitive(evt, "qname_hashed") &&
+        !json_int_in(evt, "qname_hashed", 0, 1, &hashed)) return 0;
+
+    const cJSON *ts = cJSON_GetObjectItemCaseSensitive(evt, "ts");
+    if (!cJSON_IsNumber(ts) || !(ts->valuedouble >= 0 && ts->valuedouble <= PROTO_TS_MAX))
+        return 0;
+    long long ts_ns = (long long)ts->valuedouble * 1000000LL;
+
+    char esc_agent[MAX_TAG_LEN];
+    char f_qn[2 * 256 + 8], f_src[2 * 46 + 8], f_dst[2 * 46 + 8];
+    lp_escape(esc_agent, sizeof(esc_agent), agent_id ? agent_id : "unknown");
+    if (lp_field_str(f_qn,  sizeof(f_qn),  qname) < 0 ||
+        lp_field_str(f_src, sizeof(f_src), src)   < 0 ||
+        lp_field_str(f_dst, sizeof(f_dst), dst)   < 0) return 0;
+
+    /* Tags (baixa cardinalidade): agent_id, protocol, qtype, rcode. O resto é
+     * field. Timestamp é o do agente, em ns. */
+    int n = snprintf(out, cap,
+        "proto_dns,agent_id=%s,protocol=%s,qtype=%s,rcode=%ld "
+        "qname=%s,src_ip=%s,dst_ip=%s,resp=%ldi,bytes=%ldi,qtype_num=%ldi,"
+        "qname_hashed=%s %lld\n",
+        esc_agent, proto, proto_qtype_name(qtype), rcode,
+        f_qn, f_src, f_dst, resp, bytes, qtype,
+        hashed ? "true" : "false", ts_ns);
+    if (n <= 0 || (size_t)n >= cap) return 0;
+    return (size_t)n;
+}
+
+int nta_influx_write_proto(NtaInflux *inf, const char *body, size_t len,
+                           const char *agent_id, unsigned *skipped) {
+    if (skipped) *skipped = 0;
+    if (!inf->ready || !body || len == 0) return -1;
+
+    cJSON *root = cJSON_ParseWithLength(body, len);
+    if (!root) {
+        fprintf(stderr, "[PROTO] JSON invalido (%zuB)\n", len);
+        return -1;
+    }
+    int is_arr = cJSON_IsArray(root);
+    if (!is_arr && !cJSON_IsObject(root)) {
+        cJSON_Delete(root);
+        return -1;
+    }
+
+    char *acc = malloc(PROTO_ACC_CAP);
+    if (!acc) { cJSON_Delete(root); return -1; }
+
+    char   line[PROTO_LINE_MAX];
+    size_t w = 0;
+    unsigned n_pts = 0, n_skip = 0;
+    int rc = 0;
+
+    /* Junta registros num bloco e envia; bloco cheio é enviado antes de
+     * continuar, então um lote grande não estoura o buffer. */
+    const cJSON *item = is_arr ? root->child : root;
+    while (item) {
+        size_t l = nta_influx_proto_line(item, agent_id, line, sizeof(line));
+        if (l == 0) {
+            n_skip++;
+        } else {
+            if (w + l >= PROTO_ACC_CAP) {
+                rc = influx_post(inf, acc, w);
+                w = 0;
+                if (rc != 0) break;
+            }
+            memcpy(acc + w, line, l);
+            w += l;
+            n_pts++;
+        }
+        item = is_arr ? item->next : NULL;
+    }
+    if (rc == 0 && w > 0) rc = influx_post(inf, acc, w);
+
+    free(acc);
+    cJSON_Delete(root);
+    if (skipped) *skipped = n_skip;
+    if (rc == 0 && n_pts > 0)
+        fprintf(stderr, "[PROTO] proto_dns: %u ponto(s) OK\n", n_pts);
+    return rc;
+}
+
+/* -------------------------------------------------------------------------- *
  * Close                                                                      *
  * -------------------------------------------------------------------------- */
 void nta_influx_close(NtaInflux *inf) {

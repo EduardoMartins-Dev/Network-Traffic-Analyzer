@@ -59,6 +59,8 @@ else
 fi
 
 # Task de downsampling: agrega traffic por 1m → traffic_1m no bucket warm.
+# Os logs de DNS (measurement proto_dns, B16) NÃO entram aqui: o filtro abaixo é
+# exato em "traffic", então proto_dns fica só no bucket quente (7 d).
 TASK_NAME="downsample_traffic_1m"
 FLUX_BODY=$(cat <<FLUX
 option task = {name: "${TASK_NAME}", every: 1m, offset: 10s}

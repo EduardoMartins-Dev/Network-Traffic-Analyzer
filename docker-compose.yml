@@ -73,6 +73,9 @@ services:
       - NTA_EXPORT_HOSTNAME=${NTA_EXPORT_HOSTNAME:-}
       - NTA_EXPORT_QUEUE=${NTA_EXPORT_QUEUE:-}
       - NTA_EXPORT_TIMEOUT_MS=${NTA_EXPORT_TIMEOUT_MS:-}
+      # Logs de DNS do agente (B16): vazio = o consumidor de protocol_queue fica desligado.
+      # Use protocol_queue quando os agentes têm AGENT_PROTO_LOGS=dns (ver README).
+      - PROTO_QUEUE=${PROTO_QUEUE:-}
     ports:
       - "127.0.0.1:9091:9091" # /health e /metrics (só localhost)
     volumes:
