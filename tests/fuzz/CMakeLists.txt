@@ -10,6 +10,12 @@
 # fuzz_parser   libFuzzer + ASan + UBSan. Só com clang (-fsanitize=fuzzer).
 # fuzz_replay   driver sem libFuzzer: roda arquivos (corpus ou crash-*) com
 #               qualquer compilador, inclusive gcc com ASan/UBSan.
+#
+# Carregador de limiares (B18 fase 1), mesmo esquema:
+#   cmake --build build-fuzz --target fuzz_rules          (clang)
+#   mkdir corpus-rules && cp deploy/rules/*.json corpus-rules/
+#   ./build-fuzz/fuzz_rules corpus-rules -max_total_time=120 -max_len=16384
+#   ./build-fuzz/fuzz_rules_replay <arquivos>             (qualquer compilador)
 cmake_minimum_required(VERSION 3.13)
 project(NtaFuzz C)
 
@@ -53,4 +59,27 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang")
     target_compile_options(fuzz_parser PRIVATE -fsanitize=fuzzer ${FUZZ_SAN_FLAGS})
     target_link_options(fuzz_parser PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_libraries(fuzz_parser PRIVATE ${FUZZ_LIBS})
+endif()
+
+# B18 fase 1: carregador de limiares (rules.c + cJSON). Mesmo esquema: driver
+# sem libFuzzer (fuzz_rules_replay) e o alvo libFuzzer (fuzz_rules, só clang).
+set(RULES_SRC
+        ${NTA_ROOT}/src/agent/analysis/rules.c
+        ${NTA_ROOT}/third_party/cjson/cJSON.c)
+set(RULES_INC ${FUZZ_INC} ${NTA_ROOT}/third_party/cjson)
+
+add_executable(fuzz_rules_replay replay_main.c fuzz_rules.c ${RULES_SRC})
+target_include_directories(fuzz_rules_replay PRIVATE ${RULES_INC})
+target_compile_definitions(fuzz_rules_replay PRIVATE ${FUZZ_DEFS})
+target_compile_options(fuzz_rules_replay PRIVATE ${FUZZ_SAN_FLAGS})
+target_link_options(fuzz_rules_replay PRIVATE -fsanitize=address,undefined)
+target_link_libraries(fuzz_rules_replay PRIVATE ${FUZZ_LIBS})
+
+if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    add_executable(fuzz_rules fuzz_rules.c ${RULES_SRC})
+    target_include_directories(fuzz_rules PRIVATE ${RULES_INC})
+    target_compile_definitions(fuzz_rules PRIVATE ${FUZZ_DEFS})
+    target_compile_options(fuzz_rules PRIVATE -fsanitize=fuzzer ${FUZZ_SAN_FLAGS})
+    target_link_options(fuzz_rules PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_libraries(fuzz_rules PRIVATE ${FUZZ_LIBS})
 endif()
