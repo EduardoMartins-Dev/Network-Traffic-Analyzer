@@ -18,6 +18,8 @@ Captura→Mensageria→Agent/Server→IDS Engine→Multi-Thr→DX+LLM-Tools→AI
 >
 > **Nota de revisão 2026-11-21 (pós-v8.1.1, em `main`, sem tag):** IPv6 no agente (B09, PR #31) e no servidor (B33, PR #35); VLAN/QinQ e fragmentação IPv4 no agente (B10, PR #36, com descarte e contagem e sem remontagem); export SIEM CEF/ECS (B11, PR #42); CI macOS e FreeBSD, ambos bloqueantes (B15, PRs #38 e #44).
 
+> **Nota de revisão 2026-11-21 (B16, PR a, em `main`, sem tag):** log de protocolo DNS do agente (`AGENT_PROTO_LOGS=dns`, PR #53) e consumo pelo servidor (`proto_dns`), desligado por padrão. Pendências: a decisão de HOME_NET (o log não herda o skip de `HOME_NET`), o TLS (B16 b) e o HTTP (B16 c). Não verificado em captura ao vivo com TCP/53 nem com IPv6.
+
 ---
 
 ## Versões concluídas
