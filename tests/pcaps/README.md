@@ -33,6 +33,7 @@ Cada arquivo `.pcap` deve ter um gabarito `.json` com o mesmo nome:
 | dns-exaustao.pcap  | dns-exaustao.json   | PORT_SCAN      | 192.168.1.100      |
 | dns-normal.pcap    | dns-normal.json     | (nenhum)       | vazio: 0 alertas   |
 | malformed.pcap     | malformed.json      | (nenhum)       | vazio: 0 alertas (robustez) |
+| dns-log-basico.pcap | dns-log-basico.json | (nenhum)       | vazio: 0 alertas. Log de DNS (B16): só com `AGENT_PROTO_LOGS=dns` gera 10 linhas `[PROTO]`; não entra no score agregado |
 | ipv6-syn-flood.pcap | ipv6-syn-flood.json | SYN_FLOOD     | 2001:db8:a::100    |
 | ipv6-port-scan.pcap | ipv6-port-scan.json | PORT_SCAN     | 2001:db8:a::100    |
 | ipv6-null-scan.pcap | ipv6-null-scan.json | NULL_SCAN     | 2001:db8:a::100    |
