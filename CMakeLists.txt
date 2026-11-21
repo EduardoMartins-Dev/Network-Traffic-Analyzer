@@ -300,7 +300,7 @@ if(NTA_BUILD_BRIDGE AND NOT WIN32)
         add_test(NAME test_eve_bridge COMMAND test_eve_bridge
             ${CMAKE_SOURCE_DIR}/deploy/eve-bridge.mapping.json)
 
-        # Saída do --dry-run sobre tests/eve/sample-alerts.json (golden).
+        # Saída do --dry-run sobre tests/eve/eve-sample.json (golden).
         add_test(NAME test_eve_dryrun COMMAND ${CMAKE_COMMAND}
             -DBRIDGE_EXE=$<TARGET_FILE:nta-eve-bridge>
             -DEVE_DIR=${CMAKE_SOURCE_DIR}/tests/eve
