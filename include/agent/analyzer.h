@@ -5,6 +5,12 @@
 #include <pcap.h>
 #include <stdint.h>
 #include <time.h>
+#include "rules.h"
+
+/* Limiares dos detectores (rules.h). Troca os padrões pela estrutura `r`, já
+ * validada por rules_parse()/rules_load_file(). Chamar antes de começar a
+ * análise (pipeline ou replay): não é seguro trocar com a análise rodando. */
+void analyzer_set_rules(const NtaRules *r);
 
 /* Contadores de VLAN e fragmentação (B10). Zerados por analyzer_reset(). Lidos
  * pelo metrics_thread com analyzer_get_stats(): cada campo é atômico, mas os três

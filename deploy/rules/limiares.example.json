@@ -1,0 +1,19 @@
+{
+  "versao": 1,
+  "scan_threshold": 15,
+  "icmp_threshold": 20,
+  "syn_flood_threshold": 100,
+  "stealth_threshold": 3,
+  "brute_threshold": 30,
+  "brute_window_sec": 60,
+  "dns_subdomain_len": 50,
+  "dns_entropy_thresh": 3.5,
+  "dns_suspicious_max": 10,
+  "amplification_ratio": 10,
+  "kc_window_sec": 1800,
+  "ewma_calibration": 100,
+  "ewma_alpha_fast": 0.3,
+  "ewma_alpha_slow": 0.1,
+  "ewma_sigma": 3.0,
+  "ewma_window_sec": 60
+}

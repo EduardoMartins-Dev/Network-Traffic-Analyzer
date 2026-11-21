@@ -26,6 +26,7 @@ add_executable(NetworkTrafficAnalyzer
         src/agent/capture/capture.c
         src/agent/analysis/analyzer.c
         src/agent/analysis/collector.c
+        src/agent/analysis/rules.c
         src/agent/output/publisher.c
         src/agent/replay/replay.c
         src/agent/core/ringbuf.c
@@ -159,6 +160,26 @@ if(NTA_BUILD_TESTS)
         target_include_directories(${t} PRIVATE ${AGENT_INC})
         add_test(NAME ${t} COMMAND ${t})
     endforeach()
+
+    # B18 fase 1: carregador de limiares (rules.c) — válido, faixa, tipo, chave
+    # desconhecida, JSON profundo, arquivo gigante/vazio/binário. Sem libm.
+    add_executable(test_rules tests/unit/test_rules.c src/agent/analysis/rules.c
+            ${CJSON_DIR}/cJSON.c)
+    target_include_directories(test_rules PRIVATE ${AGENT_INC})
+    target_compile_definitions(test_rules PRIVATE
+            NTA_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    add_test(NAME test_rules COMMAND test_rules)
+
+    # B18 fase 1: um limiar alterado por AGENT_RULES_FILE muda o resultado do
+    # replay de um pcap (alerta some e alerta aparece). Usa o binário, como o
+    # replay_gabarito_vazio. Fora do Windows, como o outro teste de replay.
+    if(NOT WIN32)
+        add_test(NAME test_rules_replay COMMAND ${CMAKE_COMMAND}
+            -DNTA_EXE=$<TARGET_FILE:NetworkTrafficAnalyzer>
+            -DPCAP_DIR=${CMAKE_SOURCE_DIR}/tests/pcaps
+            -DWORK_DIR=${CMAKE_BINARY_DIR}/rules_replay
+            -P ${CMAKE_SOURCE_DIR}/tests/unit/rules_replay.cmake)
+    endif()
 
     # Parser WHOIS do nta-server (servidor é Linux/Docker)
     if(NOT WIN32)
