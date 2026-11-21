@@ -37,4 +37,14 @@ int publisher_send_json(const char *json_array);
  * Retorna -1 se o broker está fora (métrica é descartável).              */
 int publisher_send_metrics(const char *json_payload);
 
+/* B16: fila dos logs de protocolo (AGENT_PROTO_QUEUE, padrão protocol_queue).
+ * Chamar antes de init_queue, e só com AGENT_PROTO_LOGS ligado: só nesse caso
+ * a fila é declarada no broker. */
+void publisher_enable_proto_queue(void);
+
+/* Publica um array JSON de registros de protocolo (event_type "dns") na fila
+ * de logs. Mesmas propriedades do lote. Retorna -1 se o broker está fora (o
+ * chamador mantém o lote). */
+int publisher_send_protocol(const char *json_array);
+
 #endif /* PUBLISHER_H */

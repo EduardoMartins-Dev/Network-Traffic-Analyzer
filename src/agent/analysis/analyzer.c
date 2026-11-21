@@ -9,6 +9,7 @@
 #include "analyzer.h"
 #include "publisher.h"
 #include "collector.h"
+#include "dns_log.h"
 
 /* ========================================================================= *
  * ENDEREÇO DE QUALQUER FAMÍLIA (B09)                                        *
@@ -1082,6 +1083,41 @@ static int parse_ipv6(const unsigned char *packet, int length, int base, IpPkt *
 }
 
 /* ========================================================================= *
+ * LOG DE PROTOCOLO DNS (B16, PR a)                                          *
+ *                                                                           *
+ * Não é detecção: nenhum detector lê isto. Só roda com AGENT_PROTO_LOGS=dns  *
+ * (g_dns_log_on); desligado, o custo é um teste por pacote.                 *
+ * ========================================================================= */
+
+/* DECISÃO DE PRODUTO EM ABERTO (ADR - DNS com HOME_NET): o log de DNS NÃO herda
+ * o skip de HOME_NET. Quem consulta, dentro da rede, é justamente o que o log
+ * quer mostrar. Esta é a única função que decide isso: para voltar a pular
+ * HOME_NET, troque o `return 1` por `return !is_home_addr(src)`. Custo: sem o skip,
+ * o volume sobe com o tráfego interno e aparecem nomes consultados por hosts
+ * internos (privacidade). Ver deploy/agent.env.example. */
+static int dns_log_should_log(const NtaAddr *src, const NtaAddr *dst) {
+    (void)src;
+    (void)dst;
+    return 1;
+}
+
+/* Chamado depois da validação IP (parse_ipv4/parse_ipv6), antes do skip de
+ * HOME_NET e de find_or_create_suspect: o log não depende da tabela de suspeitos
+ * nem do skip. Fragmentos não iniciais já saíram em parse_ipv4/parse_ipv6. */
+static void proto_dns_hook(const IpPkt *p, int64_t ts_ms) {
+    DnsEvent ev;
+    if (dns_log_parse(p->proto, p->l4, p->l4_len, &ev) != 0) return;
+    if (!dns_log_should_log(&p->src, &p->dst)) return;
+
+    /* Só bytes aqui (texto do IP e hash ficam para a thread de logs). */
+    ev.ts_ms = ts_ms;
+    memcpy(ev.src, p->src.w, 16);
+    memcpy(ev.dst, p->dst.w, 16);
+    ev.is_v6 = (p->src.family == AF_INET6);
+    dns_log_submit(&ev, g_replay_mode);
+}
+
+/* ========================================================================= *
  * FUNÇÃO PRINCIPAL DE ANÁLISE                                               *
  * ========================================================================= */
 
@@ -1102,6 +1138,11 @@ static int parse_ipv6(const unsigned char *packet, int length, int base, IpPkt *
  * @return 1 se ataque detectado, 0 se tráfego normal
  */
 int analyze_packet(const unsigned char *packet, int length, time_t now) {
+    return analyze_packet_ms(packet, length, now, (int64_t)now * 1000);
+}
+
+int analyze_packet_ms(const unsigned char *packet, int length, time_t now,
+                      int64_t ts_ms) {
     cleanup_suspects(now);
 
     /* EtherType depois das tags VLAN: 0x0806 = ARP | 0x0800 = IPv4 | 0x86DD = IPv6.
@@ -1133,6 +1174,9 @@ int analyze_packet(const unsigned char *packet, int length, time_t now) {
     } else {
         return 0;
     }
+
+    /* Log de DNS (B16): antes do skip de HOME_NET, que não se aplica ao log. */
+    if (g_dns_log_on) proto_dns_hook(&pkt, ts_ms);
 
     /* HOME_NET skip — promiscuous captura egress do próprio host. Sem skip,
      * DNS queries legítimas viram DNS_TUNNEL (subdomains longos de CDN),

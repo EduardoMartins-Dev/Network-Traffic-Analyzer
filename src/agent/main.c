@@ -12,6 +12,7 @@
 #include "service.h"
 #include "analyzer.h"
 #include "rules.h"
+#include "dns_log.h"
 
 /* ========================================================================= *
  * VERIFICAÇÃO DE PRIVILÉGIOS (Multiplataforma)                              *
@@ -129,6 +130,17 @@ int main(int argc, char *argv[]) {
         }
         analyzer_set_rules(&rules);
         fprintf(stderr, "[RULES] limiares carregados de %s\n", rules_file);
+    }
+
+    /* AGENT_PROTO_LOGS / AGENT_PROTO_HASH_NAMES (B16): tipo desconhecido ou valor
+     * inválido aborta a subida. Sem a variável, o log fica desligado e a saída
+     * do agente não muda. */
+    {
+        char proto_err[160];
+        if (dns_log_config_from_env(proto_err, sizeof(proto_err)) != 0) {
+            fprintf(stderr, "Erro: %s\n", proto_err);
+            return 1;
+        }
     }
 
     /* ------------------------------------------------------------------- *

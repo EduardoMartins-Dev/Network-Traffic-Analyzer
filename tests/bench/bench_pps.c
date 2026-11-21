@@ -49,6 +49,7 @@
 #include "capture.h"
 #include "pipeline.h"
 #include "publisher.h"
+#include "dns_log.h"
 #include "cJSON.h"
 #ifndef _WIN32
 #include <unistd.h>
@@ -235,6 +236,14 @@ int publisher_send_metrics(const char *json_payload) {
 }
 
 void init_queue(void) {}
+
+/* B16: com AGENT_PROTO_LOGS=dns o pipeline sobe a thread de logs; o envio da
+ * fila de logs também é sumidouro (a serialização JSON entra na medição). */
+void publisher_enable_proto_queue(void) {}
+int publisher_send_protocol(const char *json_array) {
+    (void)json_array;
+    return 0;
+}
 void close_queue(void) {}
 
 /* Cópia do caminho live de publish_packet (publisher.c), sem AMQP.          */
@@ -484,6 +493,16 @@ int main(int argc, char **argv) {
            env_or("AGENT_BATCH_SIZE", "50 (default)"),
            env_or("AGENT_BATCH_TIMEOUT_MS", "100 (default)"),
            env_or("AGENT_METRICS_INTERVAL_SEC", "1"));
+
+    /* Como o agente (main.c): AGENT_PROTO_LOGS=dns liga o log de DNS (B16) e
+     * sobe a thread de logs; sem a variável, o caminho é o de antes. */
+    char proto_err[160];
+    if (dns_log_config_from_env(proto_err, sizeof(proto_err)) != 0) {
+        fprintf(stderr, "bench_pps: %s\n", proto_err);
+        return 1;
+    }
+    printf("Log de protocolo DNS (B16): %s\n",
+           g_dns_log_on ? "ligado (AGENT_PROTO_LOGS=dns)" : "desligado");
 
     int rc = pipeline_run("bench-sintetico");
 

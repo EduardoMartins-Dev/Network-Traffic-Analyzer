@@ -20,7 +20,9 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header,
     /* caplen = bytes realmente presentes em `packet`; len é o tamanho
      * original no fio e pode ser maior (pcap gravado com snaplen curto). */
     if (g_replay_mode) {
-        analyze_packet(packet, (int)header->caplen, header->ts.tv_sec);
+        int64_t ts_ms = (int64_t)header->ts.tv_sec * 1000
+                      + (int64_t)(header->ts.tv_usec / 1000);
+        analyze_packet_ms(packet, (int)header->caplen, header->ts.tv_sec, ts_ms);
         return;
     }
 

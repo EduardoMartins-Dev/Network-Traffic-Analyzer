@@ -27,6 +27,7 @@ add_executable(NetworkTrafficAnalyzer
         src/agent/analysis/analyzer.c
         src/agent/analysis/collector.c
         src/agent/analysis/rules.c
+        src/agent/analysis/protocols/dns_log.c
         src/agent/output/publisher.c
         src/agent/replay/replay.c
         src/agent/core/ringbuf.c
@@ -148,7 +149,8 @@ if(NTA_BUILD_TESTS)
     add_executable(test_config tests/unit/test_config.c src/agent/core/config.c)
 
     add_executable(test_analyzer tests/unit/test_analyzer.c
-            src/agent/analysis/analyzer.c src/agent/analysis/collector.c)
+            src/agent/analysis/analyzer.c src/agent/analysis/collector.c
+            src/agent/analysis/protocols/dns_log.c src/agent/core/ringbuf.c)
     if(WIN32)
         target_compile_definitions(test_analyzer PRIVATE _WIN32_WINNT=0x0601)
         target_link_libraries(test_analyzer PRIVATE Ws2_32)
@@ -179,6 +181,28 @@ if(NTA_BUILD_TESTS)
             -DPCAP_DIR=${CMAKE_SOURCE_DIR}/tests/pcaps
             -DWORK_DIR=${CMAKE_BINARY_DIR}/rules_replay
             -P ${CMAKE_SOURCE_DIR}/tests/unit/rules_replay.cmake)
+    endif()
+
+    # B16 (PR a): parser do log de DNS (dns_log.c) com entradas hostis e o render
+    # JSON. Só dns_log.c e ringbuf.c: não precisa de libpcap nem de rede.
+    add_executable(test_dns_log tests/unit/test_dns_log.c
+            src/agent/analysis/protocols/dns_log.c src/agent/core/ringbuf.c)
+    target_include_directories(test_dns_log PRIVATE ${AGENT_INC})
+    if(WIN32)
+        target_compile_definitions(test_dns_log PRIVATE _WIN32_WINNT=0x0601)
+        target_link_libraries(test_dns_log PRIVATE Ws2_32)
+    endif()
+    add_test(NAME test_dns_log COMMAND test_dns_log)
+
+    # B16 (PR a): AGENT_PROTO_LOGS=dns no --replay imprime linhas [PROTO] do pcap
+    # dns-log-basico (flag ligada) e nada disso com a flag desligada. Fora do
+    # Windows, como os outros testes de replay.
+    if(NOT WIN32)
+        add_test(NAME test_proto_dns_replay COMMAND ${CMAKE_COMMAND}
+            -DNTA_EXE=$<TARGET_FILE:NetworkTrafficAnalyzer>
+            -DPCAP_DIR=${CMAKE_SOURCE_DIR}/tests/pcaps
+            -DWORK_DIR=${CMAKE_BINARY_DIR}/proto_dns_replay
+            -P ${CMAKE_SOURCE_DIR}/tests/unit/proto_dns_replay.cmake)
     endif()
 
     # Parser WHOIS do nta-server (servidor é Linux/Docker)
@@ -264,6 +288,7 @@ if(NTA_BUILD_BENCH)
             src/agent/capture/capture.c
             src/agent/analysis/analyzer.c
             src/agent/analysis/collector.c
+            src/agent/analysis/protocols/dns_log.c
             ${CJSON_DIR}/cJSON.c
     )
     target_include_directories(bench_pps PRIVATE ${AGENT_INC})

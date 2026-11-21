@@ -562,6 +562,18 @@ Limites da fase 1: só arquivo (socket Unix não implementado); sem persistênci
 | `AGENT_METRICS_INTERVAL_SEC` | `10` | Intervalo de publicação da thread de métricas |
 | `AGENT_RULES_FILE` | _(nenhum)_ | Arquivo JSON com os limiares dos detectores. Sem ele, valem os padrões do código |
 | `AGENT_HOME_NETS` | _(auto)_ | CIDRs do HOME_NET separados por vírgula ou espaço (até 8 IPv4 e 8 IPv6). Se definida, substitui a detecção automática (rede da interface capturada) e a loopback não entra. Entradas inválidas são ignoradas |
+| `AGENT_PROTO_LOGS` | _(desligado)_ | Logs de protocolo. `dns` liga o log de consultas e respostas DNS (UDP/53 e TCP/53), publicado em `AGENT_PROTO_QUEUE` como evento `dns`, separado dos alertas. Outro tipo (`tls`, `http`) aborta a subida com `rc 1`. Desligado, a saída do agente não muda |
+| `AGENT_PROTO_HASH_NAMES` | _(desligado)_ | `1` troca o nome consultado (`qname`) por um hash FNV-1a 64 em hex. Não é criptográfico: serve para agrupar, não para esconder um domínio conhecido. Outro valor que não `1` ou `0` aborta a subida |
+| `AGENT_PROTO_QUEUE` | `protocol_queue` | Fila dos logs de protocolo. Só é declarada quando `AGENT_PROTO_LOGS` inclui `dns` |
+
+### Log de protocolo DNS (B16, PR a)
+
+Com `AGENT_PROTO_LOGS=dns`, cada consulta e resposta DNS vira um evento `event_type: "dns"` (`schema_version: 1`) com `ts` em ms do pacote, `proto`, `src_ip`, `dst_ip`, `qname`, `qtype`, `rcode`, `resp` (1 = resposta), `bytes` (tamanho declarado da mensagem DNS) e `qname_hashed`. O servidor grava o measurement `proto_dns` no bucket quente (7 dias), com tags `agent_id`, `protocol`, `qtype` e `rcode`. `qname` e os IPs são fields, nunca tags.
+
+- **Privacidade:** `qname` sai em **texto claro**; é o dado que o log existe para mostrar. Com `AGENT_PROTO_HASH_NAMES=1` sai só o hash.
+- **Só o que está em claro:** DNS sobre TLS/HTTPS, DoQ e QUIC não aparecem. Em TCP, a mensagem tem de estar inteira no segmento (sem remontagem).
+- **HOME_NET (decisão em aberto):** o log não herda o skip de HOME_NET, então consultas feitas por hosts internos entram no log. Ver `dns_log_should_log` em `src/agent/analysis/analyzer.c`.
+- **Servidor:** o `nta-server` só consome `protocol_queue` com `PROTO_QUEUE=protocol_queue` (vazio = desligado). Sem a variável, a fila pode existir (criada pelo agente) mas não é lida.
 
 ### Limiares dos detectores (`AGENT_RULES_FILE`)
 
@@ -901,6 +913,9 @@ Em `tests/unit/` (harness próprio, sem dependências), rodados pelo `ctest`:
 | `test_export` | Export SIEM do nta-server: render CEF e ECS, fila limitada, envio UDP e TCP para loopback — só fora do Windows |
 | `test_influx` | Formatação dos floats do line protocol do InfluxDB, com servidor HTTP de loopback. Precisa de `NTA_BUILD_SERVER` — só fora do Windows |
 | `test_replay_gabarito_vazio` | `--replay` com gabarito vazio sai com rc 0 sem alerta e rc 1 com alerta — só fora do Windows |
+| `test_dns_log` | Parser do log de DNS do agente (B16): corte em cada campo, ponteiro em laço, rótulo de 63 bytes, nome de 255/256 octetos, QDCOUNT grande ou zero, bytes hostis no rótulo, TCP com comprimento errado, render JSON e hash |
+| `test_proto_dns_replay` | `AGENT_PROTO_LOGS=dns` no `--replay` de `dns-log-basico.pcap`: 10 linhas `[PROTO]` exatas; sem a variável, nenhuma; hash; tipo não suportado sai com rc 1 — só fora do Windows |
+| `test_influx` (`proto_dns`) | Render da linha `proto_dns` (tags, fields, escape de string, validação) e envio por loopback — precisa de `NTA_BUILD_SERVER` |
 
 ```bash
 cmake -S . -B build && cmake --build build

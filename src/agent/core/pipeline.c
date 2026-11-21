@@ -8,6 +8,7 @@
 #include "capture.h"
 #include "analyzer.h"
 #include "publisher.h"
+#include "dns_log.h"
 
 #include <pthread.h>
 #include <sched.h>
@@ -174,7 +175,9 @@ static void *analysis_thread(void *arg) {
 
     while (1) {
         if (rb_pop(&g_rb_pkt, &slot) == 0) {
-            analyze_packet(slot.data, slot.len, slot.ts.tv_sec);
+            int64_t ts_ms = (int64_t)slot.ts.tv_sec * 1000
+                          + (int64_t)(slot.ts.tv_usec / 1000);
+            analyze_packet_ms(slot.data, slot.len, slot.ts.tv_sec, ts_ms);
             continue;
         }
         if (atomic_load_explicit(&g_capture_done, memory_order_acquire)) break;
@@ -249,7 +252,76 @@ static void *publish_thread(void *arg) {
 }
 
 /* ========================================================================= *
- * THREAD 4 — MÉTRICAS                                                       *
+ * THREAD DE LOGS DE PROTOCOLO (B16, PR a) — só com AGENT_PROTO_LOGS=dns.    *
+ *                                                                           *
+ * Consome o ring próprio do dns_log e publica em AGENT_PROTO_QUEUE. Não usa  *
+ * rb_evt: um pico de logs nunca tira alerta do pipeline. Descarte no ring de *
+ * logs aparece em proto_overflow (métricas).                                 *
+ * ========================================================================= */
+static void *proto_thread(void *arg) {
+    (void)arg;
+    int  batch_size    = env_int("AGENT_BATCH_SIZE",       DEFAULT_BATCH_SIZE);
+    long batch_timeout = env_int("AGENT_BATCH_TIMEOUT_MS", DEFAULT_BATCH_TIMEOUT_MS);
+
+    DnsEvent *batch    = calloc((size_t)batch_size, sizeof(DnsEvent));
+    size_t    json_cap = (size_t)batch_size * DNS_LOG_JSON_MAX + 3;
+    char     *json     = malloc(json_cap);
+    if (!batch || !json) {
+        fprintf(stderr, "[PIPE] Falha ao alocar buffers do log de protocolo.\n");
+        free(batch);
+        free(json);
+        return NULL;
+    }
+
+    int  filled      = 0;
+    long batch_start = now_ms_monotonic();
+
+    while (1) {
+        /* `drained` é lido ANTES do pop: se a análise já terminou, um pop que
+         * falha de fato quer dizer fila vazia (sem corrida com o último push). */
+        int drained = atomic_load_explicit(&g_analysis_done, memory_order_acquire);
+
+        if (filled < batch_size && dns_log_pop(&batch[filled]) == 0) {
+            if (filled == 0) batch_start = now_ms_monotonic();
+            filled++;
+            continue;
+        }
+
+        int timed_out = (filled > 0) &&
+                        (now_ms_monotonic() - batch_start >= batch_timeout);
+        if (filled == batch_size || timed_out || (drained && filled > 0)) {
+            int len = dns_log_render_json(batch, filled, json, json_cap);
+            if (len < 0) {               /* não deve ocorrer: json_cap cobre o lote */
+                filled = 0;
+                continue;
+            }
+            if (publisher_send_protocol(json) != 0) {
+                /* Broker fora: segura o lote; o ring enche e conta descarte. No
+                 * shutdown descarta em vez de travar. */
+                if (drained) {
+                    fprintf(stderr, "[PIPE] Broker indisponivel no shutdown — "
+                            "%d registros DNS descartados.\n", filled);
+                    break;
+                }
+                idle_sleep(PUBLISH_RETRY_SLEEP_NS);
+                continue;
+            }
+            filled = 0;
+            continue;
+        }
+
+        if (drained && filled == 0) break;
+        idle_sleep(IDLE_SLEEP_NS);
+    }
+
+    free(batch);
+    free(json);
+    printf("[PIPE] Thread de logs de protocolo finalizada.\n");
+    return NULL;
+}
+
+/* ========================================================================= *
+ * THREAD 4 — MÉTRICAS                                                      *
  *                                                                           *
  * A cada N segundos publica um JSON numa routing key separada com o estado *
  * atual do pipeline: profundidade dos buffers, overflows, throughput.       *
@@ -275,13 +347,20 @@ static void *metrics_thread(void *arg) {
         analyzer_stats_t as;
         analyzer_get_stats(&as);
 
+        /* proto_overflow (B16) só existe com o log de DNS ligado: desligado, o
+         * payload sai igual ao de antes. */
+        char proto_field[48] = "";
+        if (g_dns_log_on)
+            snprintf(proto_field, sizeof(proto_field), ",\"proto_overflow\":%llu",
+                     (unsigned long long)dns_log_overflow());
+
         char payload[512];
         snprintf(payload, sizeof(payload),
             "{\"rb_pkt_depth\":%zu,\"rb_evt_depth\":%zu,"
              "\"rb_pkt_overflow\":%llu,\"rb_evt_overflow\":%llu,"
              "\"batches_sent\":%llu,\"events_sent\":%llu,"
              "\"events_per_sec\":%.2f,"
-             "\"vlan_frames\":%llu,\"frag_seen\":%llu,\"frag_discarded\":%llu}",
+             "\"vlan_frames\":%llu,\"frag_seen\":%llu,\"frag_discarded\":%llu%s}",
             rb_size(&g_rb_pkt), rb_size(&g_rb_evt),
             (unsigned long long)rb_overflow(&g_rb_pkt),
             (unsigned long long)rb_overflow(&g_rb_evt),
@@ -291,7 +370,8 @@ static void *metrics_thread(void *arg) {
             eps,
             (unsigned long long)as.vlan_frames,
             (unsigned long long)as.frag_seen,
-            (unsigned long long)as.frag_discarded);
+            (unsigned long long)as.frag_discarded,
+            proto_field);
 
         publisher_send_metrics(payload);
 
@@ -322,29 +402,52 @@ int pipeline_run(const char *iface) {
     printf("[PIPE] Ring buffers prontos — %zu slots (%d solicitados).\n",
            g_rb_pkt.capacity, buf_size);
 
+    /* Log de DNS (B16) só com AGENT_PROTO_LOGS=dns: ring próprio e fila nova.
+     * Antes do init_queue, que declara as filas no primeiro connect. */
+    if (g_dns_log_on) {
+        if (dns_log_start((size_t)buf_size) != 0) {
+            fprintf(stderr, "[PIPE] Falha ao alocar ring de logs de protocolo (%d slots).\n",
+                    buf_size);
+            rb_destroy(&g_rb_pkt);
+            rb_destroy(&g_rb_evt);
+            return -1;
+        }
+        publisher_enable_proto_queue();
+    }
+
     init_queue();
 
-    pthread_t th_cap, th_ana, th_pub, th_met;
+    pthread_t th_cap, th_ana, th_pub, th_met, th_prt;
     pthread_create(&th_cap, NULL, capture_thread,  (void *)iface);
     pthread_create(&th_ana, NULL, analysis_thread, NULL);
     pthread_create(&th_pub, NULL, publish_thread,  NULL);
     pthread_create(&th_met, NULL, metrics_thread,  NULL);
+    int prt_ok = 0;
+    if (g_dns_log_on) {
+        prt_ok = (pthread_create(&th_prt, NULL, proto_thread, NULL) == 0);
+        if (!prt_ok) fprintf(stderr, "[PIPE] pthread_create (logs de protocolo) falhou\n");
+    }
 
     /* Ordem de join: captura → análise → publicação → métricas.           *
      * Cada thread downstream observa a flag _done da anterior.            */
     pthread_join(th_cap, NULL);
     pthread_join(th_ana, NULL);
     pthread_join(th_pub, NULL);
+    if (prt_ok) pthread_join(th_prt, NULL);
     g_running = 0;              /* força saída da thread de métricas        */
     pthread_join(th_met, NULL);
 
     printf("[PIPE] Descartes — rb_pkt: %llu · rb_evt: %llu\n",
            (unsigned long long)rb_overflow(&g_rb_pkt),
            (unsigned long long)rb_overflow(&g_rb_evt));
+    if (g_dns_log_on)
+        printf("[PIPE] Descartes — proto: %llu\n",
+               (unsigned long long)dns_log_overflow());
 
     close_queue();
     rb_destroy(&g_rb_pkt);
     rb_destroy(&g_rb_evt);
+    dns_log_stop();
 
     return g_capture_error ? -1 : 0;
 }

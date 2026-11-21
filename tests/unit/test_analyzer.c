@@ -4,7 +4,12 @@
 #include "test.h"
 #include "analyzer.h"
 #include "collector.h"
+#include "dns_log.h"
 #include "nta_net.h"
+#ifndef _WIN32
+#include <sys/socket.h>   /* AF_INET/AF_INET6 no FreeBSD (CI) */
+#include <arpa/inet.h>
+#endif
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -882,6 +887,62 @@ static void test_ipv6_frag_contadores(void) {
 
 /* Por último: HOME_NET IPv6 não é zerado pelo reset, e não afeta os testes
  * acima (o CIDR é 2001:db8:f::/48, que nenhum outro teste usa). */
+/* B16 (PR a): o log de DNS não herda o skip de HOME_NET. Consulta de 10.1.2.3
+ * (dentro de 10.0.0.0/8, cadastrado por test_home_net) gera registro quando o
+ * log está ligado; desligado, nada entra no ring. Os detectores continuam
+ * ignorando a mesma origem. */
+static int dns_query_pkt(uint8_t *buf, const char *src, const char *dst) {
+    static const uint8_t msg[] = {
+        0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 3, 'c', 'o', 'm', 0,
+        0x00, 0x01, 0x00, 0x01
+    };
+    memset(buf, 0, 128);
+    buf[12] = 0x08; buf[13] = 0x00;
+    nta_ipv4_hdr *ip = (nta_ipv4_hdr *)(buf + NTA_ETH_HLEN);
+    ip->ver_ihl = 0x45;
+    ip->tot_len = htons((uint16_t)(20 + 8 + sizeof(msg)));
+    ip->ttl     = 64;
+    ip->proto   = NTA_PROTO_UDP;
+    inet_pton(AF_INET, src, &ip->saddr);
+    inet_pton(AF_INET, dst, &ip->daddr);
+    nta_udp_hdr *u = (nta_udp_hdr *)(buf + NTA_ETH_HLEN + 20);
+    u->sport = htons(40000);
+    u->dport = htons(53);
+    u->len   = htons((uint16_t)(8 + sizeof(msg)));
+    memcpy(buf + NTA_ETH_HLEN + 20 + 8, msg, sizeof(msg));
+    return NTA_ETH_HLEN + 20 + 8 + (int)sizeof(msg);
+}
+
+static void test_dns_log_ignora_home_net(void) {
+    uint8_t buf[128];
+    int len = dns_query_pkt(buf, "10.1.2.3", "8.8.8.8");
+    DnsEvent e;
+
+    /* main() deste arquivo liga g_replay_mode (o coletor). O log só vai para o
+     * ring em modo live: desliga aqui e restaura no fim. */
+    int saved_replay = g_replay_mode;
+    g_replay_mode = 0;
+
+    dns_log_set_options(1, 0);
+    CHECK(dns_log_start(16) == 0);
+    analyze_packet_ms(buf, len, 1700000000, 1700000000123LL);
+    CHECK(dns_log_pop(&e) == 0);
+    CHECK_STR(e.qname, "example.com");
+    CHECK(e.ts_ms == 1700000000123LL);
+    char json[DNS_LOG_JSON_MAX];
+    CHECK(dns_log_render_json(&e, 1, json, sizeof(json)) > 0);
+    CHECK(strstr(json, "\"src_ip\":\"10.1.2.3\"") != NULL);
+    CHECK(dns_log_pop(&e) == -1);
+
+    dns_log_set_options(0, 0);
+    analyze_packet_ms(buf, len, 1700000001, 1700000001000LL);
+    CHECK(dns_log_pop(&e) == -1);
+    dns_log_stop();
+
+    g_replay_mode = saved_replay;
+}
+
 static void test_home_net_ipv6(void) {
     CHECK(analyzer_add_home_cidr("2001:db8:f::/129") == -1);
     CHECK(analyzer_add_home_cidr("2001:::1/64") == -1);
@@ -923,6 +984,7 @@ int main(void) {
     RUN(test_frag_tiny_nao_le_padding);
     RUN(test_ipv6_frag_contadores);
     RUN(test_home_net);            /* HOME_NET não é zerado pelo reset */
+    RUN(test_dns_log_ignora_home_net);   /* usa 10.0.0.0/8 de test_home_net */
     RUN(test_home_net_ipv6);       /* por último */
     TEST_EXIT();
 }

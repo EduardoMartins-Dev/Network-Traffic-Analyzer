@@ -185,7 +185,40 @@ def write_pcap(name: str, packets, interval: float) -> None:
     print(f"{name}: {len(packets)} pacotes")
 
 
+def dns_pkt(qid: int, flags: int, name: str, qtype: int) -> bytes:
+    """Mensagem DNS com uma pergunta de tipo `qtype` e nenhuma resposta (o cabeçalho
+    diz o que for preciso em `flags`: QR, RCODE)."""
+    qname = b"".join(bytes([len(l)]) + l.encode() for l in name.split(".")) + b"\0"
+    return struct.pack("!HHHHHH", qid, flags, 1, 0, 0, 0) + qname + struct.pack("!HH", qtype, 1)
+
+
+def dns_tcp(sport: int, dport: int, msg: bytes, src: bytes, dst: bytes) -> bytes:
+    """Mensagem DNS sobre TCP: prefixo de 2 bytes com o comprimento, no segmento."""
+    seg = struct.pack("!HHIIBBHHH", sport, dport, 1, 1, 5 << 4, TCP_PSH | TCP_ACK, 1024, 0, 0)
+    return ipv4(6, seg + struct.pack("!H", len(msg)) + msg, src, dst)
+
+
+def dns_log_basico() -> list:
+    """Tráfego DNS benigno para o log de protocolo (B16): A, AAAA, MX e TXT; resposta
+    NOERROR e NXDOMAIN; UDP e TCP; IPv4 e IPv6; e uma resposta sem pergunta (QDCOUNT
+    0, não gera registro). Poucos pacotes por origem: nenhum detector dispara."""
+    return [
+        udp(40001, 53, dns_pkt(0x1001, 0x0100, "example.com", 1), VICTIM, RESOLVER),
+        udp(53, 40001, dns_pkt(0x1001, 0x8180, "example.com", 1), RESOLVER, VICTIM),
+        udp(40001, 53, dns_pkt(0x1002, 0x0100, "example.org", 28), VICTIM, RESOLVER),
+        udp(53, 40001, dns_pkt(0x1002, 0x8183, "example.org", 28), RESOLVER, VICTIM),
+        udp(40002, 53, dns_pkt(0x2001, 0x0100, "example.net", 16), CLIENT, RESOLVER),
+        udp(53, 40002, dns_pkt(0x2001, 0x8180, "example.net", 16), RESOLVER, CLIENT),
+        dns_tcp(40010, 53, dns_pkt(0x3001, 0x0100, "example.com", 15), CLIENT, RESOLVER),
+        dns_tcp(53, 40010, dns_pkt(0x3001, 0x8180, "example.com", 15), RESOLVER, CLIENT),
+        udp6(40003, 53, dns_pkt(0x4001, 0x0100, "example.com", 28), V6_CLIENT, V6_RESOLVER),
+        udp6(53, 40003, dns_pkt(0x4001, 0x8180, "example.com", 28), V6_RESOLVER, V6_CLIENT),
+        udp(53, 40001, struct.pack("!HHHHHH", 0x1005, 0x8180, 0, 0, 0, 0), RESOLVER, VICTIM),
+    ]
+
+
 def main() -> None:
+    write_pcap("dns-log-basico.pcap", dns_log_basico(), 0.1)
     write_pcap("syn-flood.pcap", [tcp(40000 + i, 80, TCP_SYN) for i in range(150)], 0.01)
     write_pcap("port-scan.pcap", [tcp(40000, 1000 + i, TCP_SYN) for i in range(20)], 0.05)
     write_pcap("null-scan.pcap", [tcp(40000, 1000 + i, 0) for i in range(5)], 0.1)

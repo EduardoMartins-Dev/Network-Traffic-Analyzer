@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <curl/curl.h>
+#include "cJSON.h"
 #include "nta_server.h"
 #include "nta_geoip.h"
 #include "nta_ioc.h"
@@ -58,6 +59,25 @@ int  nta_influx_write_narrative(NtaInflux *inf,
 int  nta_influx_write_pool(NtaInflux *inf,
                            int pool_size, int backlog,
                            int unacked, int consumers);
+
+/* Logs de DNS do agente (B16, PR a), vindos da protocol_queue. Um array (ou um
+ * objeto) com registros `event_type:"dns"`, `schema_version:1`. Grava o
+ * measurement "proto_dns" com:
+ *   tags   : agent_id, protocol (UDP|TCP), qtype (mnemônico ou OTHER), rcode (0..15)
+ *   fields : qname, src_ip, dst_ip (string); resp, bytes, qtype_num (int);
+ *            qname_hashed (bool)
+ *   tempo  : ts do agente (ms no JSON, ns no line protocol), não a hora de chegada.
+ * qname e IP nunca são tags (cardinalidade). Itens com tipo/versão desconhecidos
+ * ou campos inválidos são pulados e contados em *skipped (pode ser NULL).
+ * Retorna 0 em sucesso, -1 em erro de parse ou de envio. */
+int  nta_influx_write_proto(NtaInflux *inf, const char *body, size_t len,
+                            const char *agent_id, unsigned *skipped);
+
+/* Renderiza um registro DNS (objeto JSON) como uma linha de line protocol do
+ * proto_dns, terminada em \n. Retorna o tamanho, ou 0 se o item é inválido ou
+ * não cabe em `cap`. Exposta para teste. */
+size_t nta_influx_proto_line(const cJSON *evt, const char *agent_id,
+                             char *out, size_t cap);
 
 void nta_influx_close(NtaInflux *inf);
 

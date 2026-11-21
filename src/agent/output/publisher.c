@@ -24,6 +24,8 @@
  * AGENT_TOKEN           | guest            | Credencial/senha               *
  * AGENT_QUEUE           | traffic_queue    | Fila de telemetria             *
  * AGENT_METRICS_QUEUE   | traffic_metrics  | Fila de métricas do pipeline   *
+ * AGENT_PROTO_QUEUE     | protocol_queue   | Fila dos logs de DNS (B16; só  *
+ *                       |                  | declarada com AGENT_PROTO_LOGS)*
  * AGENT_USE_TLS         | 0                | 1 = ativa TLS/SSL              *
  * AGENT_CA_CERT         | (nenhum)         | Certificado CA (.pem)          *
  * ========================================================================= */
@@ -45,6 +47,11 @@ static pthread_mutex_t          amqp_mutex = PTHREAD_MUTEX_INITIALIZER;
 static char g_queue_name[MAX_QUEUE_NAME]  = "traffic_queue";
 static char g_metrics_queue[MAX_QUEUE_NAME] = "traffic_metrics";
 static char g_agent_id[128]               = "guest";
+
+/* Fila dos logs de protocolo (B16). Só é declarada quando o log está ligado
+ * (publisher_enable_proto_queue); desligado, o broker não recebe nada novo. */
+static char g_proto_queue[MAX_QUEUE_NAME] = "protocol_queue";
+static int  g_proto_enabled               = 0;
 
 /* Parâmetros de conexão — lidos uma vez em init_queue(), reusados a cada
  * reconexão (ponteiros de getenv valem pela vida do processo). */
@@ -143,6 +150,12 @@ static int connect_locked(void) {
                        0, 1, 0, 0, amqp_empty_table);
     if (!rpc_ok("queue_declare")) { drop_connection_locked(); return -1; }
 
+    if (g_proto_enabled) {
+        amqp_queue_declare(conn, 1, amqp_cstring_bytes(g_proto_queue),
+                           0, 1, 0, 0, amqp_empty_table);
+        if (!rpc_ok("queue_declare")) { drop_connection_locked(); return -1; }
+    }
+
     g_connected  = 1;
     g_backoff_ms = RECONNECT_MIN_MS;
     printf("[RABBIT] Conectado em %s:%d | TLS: %s | mTLS: %s | Agente: %s\n",
@@ -150,6 +163,8 @@ static int connect_locked(void) {
            g_agent_id);
     printf("[RABBIT] Filas — telemetria: '%s' | metricas: '%s'\n",
            g_queue_name, g_metrics_queue);
+    if (g_proto_enabled)
+        printf("[RABBIT] Fila de logs de protocolo: '%s'\n", g_proto_queue);
     return 0;
 }
 
@@ -212,6 +227,8 @@ void init_queue(void) {
             sizeof(g_metrics_queue) - 1);
     strncpy(g_agent_id,      env_or("AGENT_ID",            "guest"),
             sizeof(g_agent_id) - 1);
+    strncpy(g_proto_queue,   env_or("AGENT_PROTO_QUEUE",   "protocol_queue"),
+            sizeof(g_proto_queue) - 1);
 
     /* Broker fora não impede o agente de subir: captura segue, eventos
      * acumulam em rb_evt e a publicação reconecta em background. */
@@ -219,6 +236,10 @@ void init_queue(void) {
     if (ensure_connected_locked() != 0)
         fprintf(stderr, "[RABBIT] Iniciando sem broker — reconexao automatica ativa.\n");
     pthread_mutex_unlock(&amqp_mutex);
+}
+
+void publisher_enable_proto_queue(void) {
+    g_proto_enabled = 1;
 }
 
 void close_queue(void) {
@@ -327,6 +348,21 @@ int publisher_send_json(const char *json_array) {
     props.user_id       = amqp_cstring_bytes(g_agent_id);
 
     return publish_to(g_queue_name, &props, json_array);
+}
+
+/* ========================================================================= *
+ * LOGS DE PROTOCOLO (B16) — array JSON pronto, fila AGENT_PROTO_QUEUE        *
+ * ========================================================================= */
+int publisher_send_protocol(const char *json_array) {
+    if (!json_array || !*json_array) return 0;
+
+    amqp_basic_properties_t props;
+    props._flags        = AMQP_BASIC_CONTENT_TYPE_FLAG | AMQP_BASIC_DELIVERY_MODE_FLAG | AMQP_BASIC_USER_ID_FLAG;
+    props.content_type  = amqp_cstring_bytes("application/json");
+    props.delivery_mode = 2;  /* persistente: log de DNS não se perde num restart do broker */
+    props.user_id       = amqp_cstring_bytes(g_agent_id);
+
+    return publish_to(g_proto_queue, &props, json_array);
 }
 
 /* ========================================================================= *

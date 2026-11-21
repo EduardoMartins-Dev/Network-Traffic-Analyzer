@@ -178,6 +178,118 @@ static void teste_narrativa(void) {
     CHECK(v == 87.123456789);
 }
 
+/* ------------------------------------------------------------------------- *
+ * proto_dns (B16, PR a): render de um registro DNS do agente. O render é a  *
+ * função pública nta_influx_proto_line; o envio (teste_proto_lote) usa o    *
+ * mesmo servidor de loopback.                                               *
+ * ------------------------------------------------------------------------- */
+static size_t linha_proto(const char *json, const char *agente, char *out, size_t cap) {
+    cJSON *j = cJSON_Parse(json);
+    if (!j) return 0;
+    size_t n = nta_influx_proto_line(j, agente, out, cap);
+    cJSON_Delete(j);
+    return n;
+}
+
+static void teste_proto_linha(void) {
+    const char *json =
+        "{\"event_type\":\"dns\",\"schema_version\":1,\"ts\":1700000000123,"
+        "\"proto\":\"UDP\",\"src_ip\":\"192.168.1.10\",\"dst_ip\":\"8.8.8.8\","
+        "\"qname\":\"example.com\",\"qtype\":1,\"rcode\":0,\"resp\":0,"
+        "\"bytes\":29,\"qname_hashed\":0}";
+    char out[1536];
+    size_t n = linha_proto(json, "agente-teste", out, sizeof(out));
+    CHECK(n > 0);
+    /* Tags: agent_id, protocol, qtype (mnemônico), rcode. Fields: o resto.
+     * Timestamp em ns (ts do agente, não a hora de chegada). */
+    CHECK_STR(out,
+        "proto_dns,agent_id=agente-teste,protocol=UDP,qtype=A,rcode=0 "
+        "qname=\"example.com\",src_ip=\"192.168.1.10\",dst_ip=\"8.8.8.8\","
+        "resp=0i,bytes=29i,qtype_num=1i,qname_hashed=false 1700000000123000000\n");
+}
+
+/* Escape: aspas, barra, controle e UTF-8 no qname viram "\"", "\\" e "?"; tag do
+ * agente com vírgula e espaço é escapada no line protocol. */
+static void teste_proto_escape(void) {
+    const char *json =
+        "{\"event_type\":\"dns\",\"schema_version\":1,\"ts\":5,"
+        "\"proto\":\"TCP\",\"src_ip\":\"10.0.0.5\",\"dst_ip\":\"8.8.8.8\","
+        "\"qname\":\"a\\\"b\\\\c\\nd\\u00e9\",\"qtype\":28,\"rcode\":3,\"resp\":1,"
+        "\"bytes\":512,\"qname_hashed\":1}";
+    char out[1536];
+    size_t n = linha_proto(json, "agente, 1", out, sizeof(out));
+    CHECK(n > 0);
+    CHECK(strstr(out, "proto_dns,agent_id=agente\\,\\ 1,protocol=TCP,qtype=AAAA,rcode=3 ") != NULL);
+    CHECK(strstr(out, "qname=\"a\\\"b\\\\c?d??\"") != NULL);
+    CHECK(strstr(out, ",resp=1i,bytes=512i,qtype_num=28i,qname_hashed=true 5000000\n") != NULL);
+    /* Nenhum byte fora de 0x20..0x7E sobrou no texto do campo. */
+    for (const char *p = out; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        CHECK(c == '\n' || (c >= 0x20 && c <= 0x7E));
+    }
+}
+
+/* Itens inválidos são pulados (0 bytes): tipo, versão, protocolo, faixas, campos
+ * ausentes, tamanhos. */
+static void teste_proto_valida(void) {
+    const char *base =
+        "{\"event_type\":\"dns\",\"schema_version\":1,\"ts\":1700000000000,"
+        "\"proto\":\"UDP\",\"src_ip\":\"10.0.0.5\",\"dst_ip\":\"8.8.8.8\","
+        "\"qname\":\"example.com\",\"qtype\":1,\"rcode\":0,\"resp\":0,\"bytes\":29}";
+    char out[1536];
+    CHECK(linha_proto(base, "a", out, sizeof(out)) > 0);
+
+    const char *ruins[] = {
+        "{\"event_type\":\"tls\",\"schema_version\":1,\"ts\":1,\"proto\":\"UDP\",\"src_ip\":\"1.1.1.1\",\"dst_ip\":\"2.2.2.2\",\"qname\":\"x\",\"qtype\":1,\"rcode\":0,\"resp\":0,\"bytes\":1}",
+        "{\"event_type\":\"dns\",\"schema_version\":2,\"ts\":1,\"proto\":\"UDP\",\"src_ip\":\"1.1.1.1\",\"dst_ip\":\"2.2.2.2\",\"qname\":\"x\",\"qtype\":1,\"rcode\":0,\"resp\":0,\"bytes\":1}",
+        "{\"event_type\":\"dns\",\"ts\":1,\"proto\":\"UDP\",\"src_ip\":\"1.1.1.1\",\"dst_ip\":\"2.2.2.2\",\"qname\":\"x\",\"qtype\":1,\"rcode\":0,\"resp\":0,\"bytes\":1}",
+        "{\"event_type\":\"dns\",\"schema_version\":1,\"ts\":1,\"proto\":\"ICMP\",\"src_ip\":\"1.1.1.1\",\"dst_ip\":\"2.2.2.2\",\"qname\":\"x\",\"qtype\":1,\"rcode\":0,\"resp\":0,\"bytes\":1}",
+        "{\"event_type\":\"dns\",\"schema_version\":1,\"ts\":1,\"proto\":\"UDP\",\"src_ip\":\"1.1.1.1\",\"dst_ip\":\"2.2.2.2\",\"qname\":\"x\",\"qtype\":1,\"rcode\":16,\"resp\":0,\"bytes\":1}",
+        "{\"event_type\":\"dns\",\"schema_version\":1,\"ts\":1,\"proto\":\"UDP\",\"src_ip\":\"1.1.1.1\",\"dst_ip\":\"2.2.2.2\",\"qname\":\"x\",\"qtype\":1,\"rcode\":0,\"resp\":2,\"bytes\":1}",
+        "{\"event_type\":\"dns\",\"schema_version\":1,\"ts\":1,\"proto\":\"UDP\",\"src_ip\":\"1.1.1.1\",\"dst_ip\":\"2.2.2.2\",\"qname\":\"x\",\"qtype\":70000,\"rcode\":0,\"resp\":0,\"bytes\":1}",
+        "{\"event_type\":\"dns\",\"schema_version\":1,\"ts\":1,\"proto\":\"UDP\",\"src_ip\":\"1.1.1.1\",\"dst_ip\":\"2.2.2.2\",\"qname\":\"x\",\"qtype\":1.5,\"rcode\":0,\"resp\":0,\"bytes\":1}",
+        "{\"event_type\":\"dns\",\"schema_version\":1,\"ts\":1,\"proto\":\"UDP\",\"src_ip\":\"1.1.1.1\",\"dst_ip\":\"2.2.2.2\",\"qname\":\"x\",\"qtype\":1,\"rcode\":0,\"resp\":0,\"bytes\":-1}",
+        "{\"event_type\":\"dns\",\"schema_version\":1,\"proto\":\"UDP\",\"src_ip\":\"1.1.1.1\",\"dst_ip\":\"2.2.2.2\",\"qname\":\"x\",\"qtype\":1,\"rcode\":0,\"resp\":0,\"bytes\":1}",
+        "{\"event_type\":\"dns\",\"schema_version\":1,\"ts\":1,\"proto\":\"UDP\",\"src_ip\":\"1.1.1.1\",\"dst_ip\":\"2.2.2.2\",\"qtype\":1,\"rcode\":0,\"resp\":0,\"bytes\":1}",
+        "{\"event_type\":\"dns\",\"schema_version\":1,\"ts\":1,\"proto\":\"UDP\",\"src_ip\":\"1.1.1.1234567890123456789012345678901234567890123\",\"dst_ip\":\"2.2.2.2\",\"qname\":\"x\",\"qtype\":1,\"rcode\":0,\"resp\":0,\"bytes\":1}",
+        "{\"event_type\":\"dns\",\"schema_version\":1,\"ts\":-5,\"proto\":\"UDP\",\"src_ip\":\"1.1.1.1\",\"dst_ip\":\"2.2.2.2\",\"qname\":\"x\",\"qtype\":1,\"rcode\":0,\"resp\":0,\"bytes\":1}",
+        "[]",
+    };
+    for (size_t i = 0; i < sizeof(ruins) / sizeof(ruins[0]); i++) {
+        CHECK(linha_proto(ruins[i], "a", out, sizeof(out)) == 0);
+    }
+}
+
+/* Lote com um item inválido: 2 pontos vão ao Influx, 1 é pulado e contado. Um
+ * lote só com itens inválidos não faz POST nenhum. */
+static void teste_proto_lote(void) {
+    const char *lote =
+        "[{\"event_type\":\"dns\",\"schema_version\":1,\"ts\":1700000000000,\"proto\":\"UDP\","
+        "\"src_ip\":\"10.0.0.5\",\"dst_ip\":\"8.8.8.8\",\"qname\":\"example.com\",\"qtype\":1,"
+        "\"rcode\":0,\"resp\":0,\"bytes\":29},"
+        "{\"event_type\":\"tls\",\"schema_version\":1,\"ts\":1700000000001},"
+        "{\"event_type\":\"dns\",\"schema_version\":1,\"ts\":1700000000002,\"proto\":\"TCP\","
+        "\"src_ip\":\"10.0.0.5\",\"dst_ip\":\"8.8.8.8\",\"qname\":\"example.net\",\"qtype\":16,"
+        "\"rcode\":0,\"resp\":1,\"bytes\":300}]";
+    unsigned skipped = 99;
+    int rc = nta_influx_write_proto(&inf, lote, strlen(lote), "agente-teste", &skipped);
+    CHECK(rc == 0);
+    CHECK(skipped == 1);
+    const char *lp = ultimo_corpo();
+    CHECK(strstr(lp, "qname=\"example.com\"") != NULL);
+    CHECK(strstr(lp, "qname=\"example.net\"") != NULL);
+    CHECK(strstr(lp, "qtype=TXT") != NULL);
+    CHECK(strstr(lp, "tls") == NULL);
+
+    /* Só itens inválidos: 0 pontos, nenhum POST (o número de requisições não muda). */
+    int antes = atomic_load(&srv.n_req);
+    const char *ruim = "[{\"event_type\":\"tls\"},{\"event_type\":\"dns\",\"schema_version\":9}]";
+    unsigned sk = 0;
+    CHECK(nta_influx_write_proto(&inf, ruim, strlen(ruim), "agente-teste", &sk) == 0);
+    CHECK(sk == 2);
+    CHECK(atomic_load(&srv.n_req) == antes);
+}
+
 int main(void) {
     int porta = 0;
     CHECK(abre_servidor(&porta) == 0);
@@ -203,6 +315,10 @@ int main(void) {
     RUN(teste_inteiros_curtos);
     RUN(teste_metricas);
     RUN(teste_narrativa);
+    RUN(teste_proto_linha);        /* B16: render de proto_dns (sem HTTP) */
+    RUN(teste_proto_escape);
+    RUN(teste_proto_valida);
+    RUN(teste_proto_lote);         /* B16: envio por loopback; último: 5 POSTs */
 
     nta_influx_close(&inf);
     pthread_join(th, NULL);
