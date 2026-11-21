@@ -1,7 +1,9 @@
 #include "eve_parse.h"
 #include "cJSON.h"
 
-#include <arpa/inet.h>
+#include <arpa/inet.h>      /* inet_pton */
+#include <netinet/in.h>      /* AF_INET6 no FreeBSD (não vem de <arpa/inet.h>) */
+#include <sys/socket.h>      /* AF_INET */
 #include <ctype.h>
 #include <string.h>
 
