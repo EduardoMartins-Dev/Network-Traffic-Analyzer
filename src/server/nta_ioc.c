@@ -9,6 +9,7 @@
 #include "nta_ioc.h"
 #include "cJSON.h"
 
+#include <sys/socket.h>
 #include <arpa/inet.h>
 #include <stdatomic.h>
 #include <stdio.h>

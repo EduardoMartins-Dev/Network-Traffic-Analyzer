@@ -11,6 +11,14 @@ set(CJSON_DIR  ${CMAKE_SOURCE_DIR}/third_party/cjson)
 set(AGENT_INC  ${CMAKE_SOURCE_DIR}/include/agent ${CJSON_DIR})
 set(SERVER_INC ${CMAKE_SOURCE_DIR}/include/server ${CJSON_DIR})
 
+# FreeBSD instala libs de terceiros via ports/pkg em /usr/local/{lib,include}.
+# link_directories só vale para alvos criados depois da chamada: precisa vir
+# antes de add_executable(NetworkTrafficAnalyzer), senão -lrabbitmq não é achado.
+if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+    include_directories(/usr/local/include)
+    link_directories(/usr/local/lib)
+endif()
+
 # --- AGENTE: Sensor de captura de tráfego (pipeline multi-thread v5.0) ---
 add_executable(NetworkTrafficAnalyzer
         src/agent/main.c
@@ -82,12 +90,6 @@ else()
     # -------------------------------------------------------------------------
     find_package(Threads REQUIRED)
     target_sources(NetworkTrafficAnalyzer PRIVATE src/agent/platform/netif_posix.c)
-
-    # FreeBSD instala libs de terceiros via ports/pkg em /usr/local/{lib,include}.
-    if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
-        include_directories(/usr/local/include)
-        link_directories(/usr/local/lib)
-    endif()
 
     target_link_libraries(NetworkTrafficAnalyzer PRIVATE
         pcap rabbitmq m Threads::Threads
