@@ -129,7 +129,7 @@ jobs:
       - name: Build harness (libFuzzer + ASan + UBSan)
         run: |
           cmake -S tests/fuzz -B build-fuzz -DCMAKE_C_COMPILER=clang
-          cmake --build build-fuzz --target fuzz_parser --parallel
+          cmake --build build-fuzz --target fuzz_parser fuzz_rules fuzz_eve --parallel
 
       - name: Corpus inicial (frames dos pcaps)
         run: python3 tests/fuzz/make_corpus.py tests/pcaps build-fuzz/corpus
@@ -140,6 +140,29 @@ jobs:
           ./build-fuzz/fuzz_parser build-fuzz/corpus \
             -max_total_time=120 -max_len=4096 -timeout=10 \
             -artifact_prefix=build-fuzz/artifacts/
+
+      # Carregador de limiares (rules, B18) e parser EVE (eve, B17): 25 s cada,
+      # mesmo esquema. `if: always()` para rodarem mesmo se o fuzz_parser cair.
+      - name: Corpus semente (rules e eve)
+        if: always()
+        run: |
+          mkdir -p build-fuzz/corpus-rules build-fuzz/corpus-eve build-fuzz/artifacts
+          cp deploy/rules/*.json build-fuzz/corpus-rules/
+          cp tests/eve/eve-sample.json build-fuzz/corpus-eve/
+
+      - name: Fuzz rules (25 s)
+        if: always()
+        run: |
+          ./build-fuzz/fuzz_rules build-fuzz/corpus-rules \
+            -max_total_time=25 -max_len=16384 -timeout=10 \
+            -artifact_prefix=build-fuzz/artifacts/rules-
+
+      - name: Fuzz eve (25 s)
+        if: always()
+        run: |
+          ./build-fuzz/fuzz_eve build-fuzz/corpus-eve \
+            -max_total_time=25 -max_len=16384 -timeout=10 \
+            -artifact_prefix=build-fuzz/artifacts/eve-
 
       - name: Upload crashes
         if: always()
