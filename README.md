@@ -508,6 +508,30 @@ O `nta-server` pode enviar **alertas** a um SIEM por syslog RFC 5424, em CEF (v0
 
 Falha no destino não bloqueia o consumo da fila: a exportação tem thread própria e descarta e conta o que não cabe. O `docker-compose.yml` repassa essas variáveis ao serviço `nta-server` (valor vazio = desligado). Modelo comentado: `deploy/nta-export.env.example`.
 
+## Ponte EVE do Suricata (`nta-eve-bridge`, B17)
+
+Processo auxiliar **ao lado do agente**, na máquina do Suricata. Lê o `eve.json` (só `event_type` = `alert`) e publica eventos NTA na `traffic_queue`, usando as credenciais AMQP do agente (`AGENT_*`, mTLS incluído). O servidor, o InfluxDB e o Grafana não mudam: o alerta aparece como `traffic` com `attack_type` `SURICATA_<categoria>`. Sem a ponte rodando, nada muda. Só POSIX (Linux, FreeBSD, macOS); não é construída no Windows.
+
+```bash
+cmake --build build --target nta-eve-bridge
+BRIDGE_EVE_PATH=/var/log/suricata/eve.json \
+BRIDGE_MAPPING_FILE=deploy/eve-bridge.mapping.json \
+./build/nta-eve-bridge --config deploy/eve-bridge.env   # --once: lê até o fim e sai; --dry-run: imprime JSON sem AMQP
+```
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `BRIDGE_EVE_PATH` | _(obrigatória)_ | `eve.json` a seguir (tail; trata rotação e truncamento) |
+| `BRIDGE_MAPPING_FILE` | _(obrigatória)_ | Tabela de categoria → estágio, severidade → score (JSON; padrão em `deploy/eve-bridge.mapping.json`) |
+| `BRIDGE_AGG_WINDOW_MS` | `10000` | Alertas iguais (`signature_id` + `src_ip`) são agregados nessa janela; `0` desliga |
+| `BRIDGE_RATE_PER_SEC` | `100` | Limite de registros publicados por segundo; `0` desliga. Excedente é descartado e contado |
+| `BRIDGE_ATTACKER_SIDE` | `src` | `src`: atacante = `src_ip`. `response`: troca para `dest_ip` quando `direction` é `to_client` (ver ressalva abaixo) |
+| `BRIDGE_STATS_INTERVAL_SEC` | `10` | Intervalo dos contadores no log (lidas, invalidas, descartados, publicados) |
+
+Categorias fracas (`RECON`) têm teto de score 40, abaixo do `NARRATOR_MIN_SCORE` padrão (80). Severidade 1 de exploração ou exfiltração chega a 85 e dispara o narrator. Modelo de configuração: `deploy/eve-bridge.env.example`. Contrato lido e ressalvas: `tests/eve/README.md`.
+
+Ressalva: a doc oficial do Suricata não define a semântica de `direction`, e o exemplo oficial mostra `to_client` com o atacante em `src_ip`. Por isso o padrão é `src`.
+
 ---
 
 ## Configuração do Agente (Variáveis de Ambiente)
