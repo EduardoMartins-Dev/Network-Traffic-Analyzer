@@ -13,6 +13,8 @@ Para validar com tráfego real, pcaps podem vir de datasets públicos como:
 - **Malware Traffic Analysis**: https://www.malware-traffic-analysis.net/
 - **CTF captures**: datasets de competições públicas
 
+São 34 `.pcap`: 26 com detecção esperada no gabarito e 8 com gabarito vazio (`expected: []`).
+
 ## Convenção de nomes
 
 Cada arquivo `.pcap` deve ter um gabarito `.json` com o mesmo nome:
@@ -92,6 +94,7 @@ Notas sobre os gabaritos novos:
   truncados, cadeia de 9 extensões, fragmento não inicial e ESP, que não podem
   gerar alerta). Checksums de L4 são calculados, mas o analyzer não os verifica.
   ARP e NDP sobre IPv6 não têm pcap: NDP spoof está fora do escopo.
+- **Log de DNS (B16)** (`dns-log-basico.pcap`): 11 pacotes, dos quais 10 geram registro. O 11º é uma resposta sem pergunta, que não gera registro. Com `AGENT_PROTO_LOGS=dns`, o `--replay` imprime 10 linhas `[PROTO]`; sem a variável, nenhuma. Gabarito vazio: não pode alertar. Teste: `test_proto_dns_replay`.
 - **Sem gabarito** (`dns-normal.pcap`): DNS proporcional (consulta de 71 B,
   resposta de 128 B, ~1,7x). Não pode gerar nenhum alerta. Com
   gabarito vazio, o `--replay-dir` deixa o arquivo fora do score agregado, e o

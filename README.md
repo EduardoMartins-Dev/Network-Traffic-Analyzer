@@ -91,6 +91,7 @@ O agente roda 4 threads conectadas por ring buffers **SPSC lock-free** (C11 atom
 - **análise** consome `rb_pkt`, executa EWMA + kill chain e enfileira eventos em `rb_evt`.
 - **publicação** agrupa até `AGENT_BATCH_SIZE` eventos (ou `AGENT_BATCH_TIMEOUT_MS`) em um único array JSON via cJSON e dispara uma única chamada AMQP.
 - **métricas** publica periodicamente em `AGENT_METRICS_QUEUE` (profundidade dos buffers, overflows, events/s).
+- **logs de protocolo (B16, só com `AGENT_PROTO_LOGS=dns`):** uma quinta thread (`proto_thread`) consome um ring próprio, separado de `rb_evt`, e publica os registros DNS em `AGENT_PROTO_QUEUE`. Um pico de logs não tira alerta do pipeline; o descarte no ring aparece em `proto_overflow`.
 
 Shutdown gracioso: `SIGINT`/`SIGTERM` → `pcap_breakloop` → threads drenam a pipeline e fazem flush final.
 
@@ -173,7 +174,7 @@ Network-Traffic-Analyzer/
 ├── tests/
 │   ├── unit/                 # testes unitários (ctest)
 │   ├── eve/                  # EVE de exemplo e golden do --dry-run da ponte
-│   ├── pcaps/                # 33 PCAPs sintéticos + gabaritos (gen_pcaps.py)
+│   ├── pcaps/                # 34 PCAPs sintéticos + gabaritos (gen_pcaps.py)
 │   ├── fuzz/                 # harness libFuzzer do parser, do carregador de limiares e da ponte
 │   └── bench/                # benchmark de throughput pps (opcional)
 ├── installer/                # instalador Windows (Inno Setup)
@@ -285,7 +286,7 @@ sudo dnf install moby-engine docker-compose python3 python3-pip
 
 O servidor inteiro roda em containers — funciona igual em Linux, macOS e
 Windows (Docker Desktop + Git Bash). O `nta-server` é compilado na imagem
-(`deploy/nta-server.Dockerfile`) e expõe `/health` em `127.0.0.1:9091`.
+(`deploy/nta-server.Dockerfile`) e expõe `/health` em `127.0.0.1:9091`. O JSON traz `version` (`v8.1.1`): é a constante `VERSION_STR` em `src/server/nta_health.c`, atualizada à mão a cada release.
 
 Manual (sem scripts):
 ```bash
@@ -400,7 +401,7 @@ suportado — o pipeline usa atômicos C11, ainda experimentais no MSVC.
 pacman -S --needed mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,rabbitmq-c}
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNPCAP_SDK_DIR="C:/Npcap-sdk"
 cmake --build build
-./build/NetworkTrafficAnalyzer.exe --replay-dir tests/pcaps   # valida: Score agregado 100.0% (26/26); 33 pcaps, 7 com gabarito vazio
+./build/NetworkTrafficAnalyzer.exe --replay-dir tests/pcaps   # valida: Score agregado 100.0% (26/26); 34 pcaps, 8 com gabarito vazio
 ./build/NetworkTrafficAnalyzer.exe --list-interfaces          # \Device\NPF_{GUID}
 ```
 
@@ -473,7 +474,7 @@ Não requer privilégio nem RabbitMQ em execução.
   --report tests/report.json
 ```
 
-> `tests/pcaps/` tem 33 `.pcap` sintéticos e determinísticos, cada um com gabarito `.json`. 26 têm detecções esperadas. Os outros 7 têm gabarito vazio (`expected: []`): `malformed`, `dns-normal`, `vlan-malformado`, `frag-ipv4-nao-inicial`, `frag-ipv4-tiny`, `ipv6-benign` e `ipv6-malformed`. Com `--replay` de arquivo único, um gabarito vazio sai com rc 0 se não houver alerta e com rc 1 se houver; `--replay-dir` deixa esses arquivos fora do score agregado. Os arquivos são gerados por `tests/pcaps/gen_pcaps.py`. Para tráfego real, consulte [tests/pcaps/README.md](tests/pcaps/README.md).
+> `tests/pcaps/` tem 34 `.pcap` sintéticos e determinísticos, cada um com gabarito `.json`. 26 têm detecções esperadas. Os outros 8 têm gabarito vazio (`expected: []`): `malformed`, `dns-normal`, `dns-log-basico`, `vlan-malformado`, `frag-ipv4-nao-inicial`, `frag-ipv4-tiny`, `ipv6-benign` e `ipv6-malformed`. Com `--replay` de arquivo único, um gabarito vazio sai com rc 0 se não houver alerta e com rc 1 se houver; `--replay-dir` deixa esses arquivos fora do score agregado. Os arquivos são gerados por `tests/pcaps/gen_pcaps.py`. Para tráfego real, consulte [tests/pcaps/README.md](tests/pcaps/README.md).
 
 Saída esperada:
 
@@ -573,7 +574,7 @@ Com `AGENT_PROTO_LOGS=dns`, cada consulta e resposta DNS vira um evento `event_t
 - **Privacidade:** `qname` sai em **texto claro**; é o dado que o log existe para mostrar. Com `AGENT_PROTO_HASH_NAMES=1` sai só o hash.
 - **Só o que está em claro:** DNS sobre TLS/HTTPS, DoQ e QUIC não aparecem. Em TCP, a mensagem tem de estar inteira no segmento (sem remontagem).
 - **HOME_NET (decisão em aberto):** o log não herda o skip de HOME_NET, então consultas feitas por hosts internos entram no log. Ver `dns_log_should_log` em `src/agent/analysis/analyzer.c`.
-- **Servidor:** o `nta-server` só consome `protocol_queue` com `PROTO_QUEUE=protocol_queue` (vazio = desligado). Sem a variável, a fila pode existir (criada pelo agente) mas não é lida.
+- **Servidor:** o `nta-server` só consome `protocol_queue` com `PROTO_QUEUE=protocol_queue` (vazio = desligado). Sem a variável, a fila pode existir (criada pelo agente) mas não é lida. Fora do `docker-compose.yml` (que define `RABBIT_PORT=5672`), defina `RABBIT_PORT` também: o padrão do código é `5674`.
 
 ### Limiares dos detectores (`AGENT_RULES_FILE`)
 
@@ -913,6 +914,7 @@ Em `tests/unit/` (harness próprio, sem dependências), rodados pelo `ctest`:
 | `test_export` | Export SIEM do nta-server: render CEF e ECS, fila limitada, envio UDP e TCP para loopback — só fora do Windows |
 | `test_influx` | Formatação dos floats do line protocol do InfluxDB, com servidor HTTP de loopback. Precisa de `NTA_BUILD_SERVER` — só fora do Windows |
 | `test_replay_gabarito_vazio` | `--replay` com gabarito vazio sai com rc 0 sem alerta e rc 1 com alerta — só fora do Windows |
+| `test_replay_report` | `--report` do `--replay-dir` grava um nome de pcap por entrada (antes, todas apontavam para o último pcap) — só fora do Windows |
 | `test_dns_log` | Parser do log de DNS do agente (B16): corte em cada campo, ponteiro em laço, rótulo de 63 bytes, nome de 255/256 octetos, QDCOUNT grande ou zero, bytes hostis no rótulo, TCP com comprimento errado, render JSON e hash |
 | `test_proto_dns_replay` | `AGENT_PROTO_LOGS=dns` no `--replay` de `dns-log-basico.pcap`: 10 linhas `[PROTO]` exatas; sem a variável, nenhuma; hash; tipo não suportado sai com rc 1 — só fora do Windows |
 | `test_influx` (`proto_dns`) | Render da linha `proto_dns` (tags, fields, escape de string, validação) e envio por loopback — precisa de `NTA_BUILD_SERVER` |
@@ -928,7 +930,7 @@ O workflow `.github/workflows/test-ids.yml` roda em push para `main` e `V4.0` e 
 1. Linux: compila, roda os testes unitários e o replay (`--replay-dir tests/pcaps/`, falha se o score < 80%)
 2. Sanitizers: testes + replay sob ASan/UBSan — qualquer acesso inválido ou comportamento indefinido reprova
 3. ThreadSanitizer no `test_ioc` (job `tsan-ioc`): **não bloqueante**
-4. Fuzzing do parser (job `fuzz-smoke`, libFuzzer + ASan/UBSan, 120 s sobre os frames dos pcaps): **não bloqueante**; crashes vão ao artefato `fuzz-parser-artifacts`
+4. Fuzzing do parser (job `fuzz-smoke`, libFuzzer + ASan/UBSan: `fuzz_parser` 120 s sobre os frames dos pcaps; `fuzz_rules` e `fuzz_eve`, 25 s cada): **não bloqueante**; crashes vão ao artefato `fuzz-parser-artifacts`
 5. Windows (MSYS2): compila o `.exe` estático, roda os testes unitários nativamente e compila o instalador
 6. Imagem Docker do `nta-server`: build + smoke do `/health`
 7. macOS (`agent-macos`, Homebrew): build, testes unitários e replay-dir; bloqueante
@@ -983,7 +985,7 @@ No docker-compose, URL vazia vira um placeholder `.invalid` (não resolve), ent�
 | v6.0 | AI Narrator (LLM via Groq) | ✅ migrado para C em v7.0 |
 | v7.0 | nta-server em C + narrator C (Groq) + pool adaptativo (Mgmt API) + retention 7d/90d + mTLS multi-agente | ✅ feature-complete · cluster RabbitMQ deferido p/ v10.0 |
 | v8.0 | Threat Intelligence (GeoLite2-City+ASN, IoC framework, AbuseIPDB + dual-trigger narrator, WHOIS nativo) | ✅ feature-complete |
-| pós-v8.1 (em `main`, sem tag) | Alertas Slack/Discord/ntfy opcionais; feeds IoC automáticos e recarga por SIGHUP; camada ATT&CK Navigator; detecção de refletor DNS (AMPLIFICATION); alerta de host offline; pcaps de cobertura; fuzzing e benchmark de pps; IPv6 no agente e no servidor (B09, B33); VLAN/QinQ e fragmentação IPv4 no agente (B10); export SIEM CEF/ECS (B11); CI macOS e FreeBSD (B15); ponte EVE do Suricata, fase 1 (B17); limiares dos detectores em JSON, fase 1 (B18) | ✅ |
+| pós-v8.1 (em `main`, sem tag) | Alertas Slack/Discord/ntfy opcionais; feeds IoC automáticos e recarga por SIGHUP; camada ATT&CK Navigator; detecção de refletor DNS (AMPLIFICATION); alerta de host offline; pcaps de cobertura; fuzzing e benchmark de pps; IPv6 no agente e no servidor (B09, B33); VLAN/QinQ e fragmentação IPv4 no agente (B10); export SIEM CEF/ECS (B11); CI macOS e FreeBSD (B15); ponte EVE do Suricata, fase 1 (B17); limiares dos detectores em JSON, fase 1 (B18); log de DNS do agente, PR a (B16) | ✅ |
 | v9.0 | Alta Performance (AF_PACKET + TPACKET_V3 + zero-copy) | Planejado |
 | v10.0 | Produção: VPS + Terraform + Nginx + Let's Encrypt (deploy final) | Planejado |
 
