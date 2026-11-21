@@ -64,6 +64,15 @@ services:
       - RABBIT_MGMT_PORT=15672
       - INFLUX_URL=http://influxdb:8086
       - INFLUX_TOKEN=${INFLUX_TOKEN:-my-super-secret-auth-token}
+      # Export SIEM (opcional, desligado com NTA_EXPORT_FORMAT vazio). Ver deploy/nta-export.env.example.
+      # Vazio = padrão do servidor, então o container se comporta como antes sem estas variáveis.
+      - NTA_EXPORT_FORMAT=${NTA_EXPORT_FORMAT:-}
+      - NTA_EXPORT_SYSLOG_HOST=${NTA_EXPORT_SYSLOG_HOST:-}
+      - NTA_EXPORT_SYSLOG_PORT=${NTA_EXPORT_SYSLOG_PORT:-}
+      - NTA_EXPORT_SYSLOG_PROTO=${NTA_EXPORT_SYSLOG_PROTO:-}
+      - NTA_EXPORT_HOSTNAME=${NTA_EXPORT_HOSTNAME:-}
+      - NTA_EXPORT_QUEUE=${NTA_EXPORT_QUEUE:-}
+      - NTA_EXPORT_TIMEOUT_MS=${NTA_EXPORT_TIMEOUT_MS:-}
     ports:
       - "127.0.0.1:9091:9091" # /health e /metrics (só localhost)
     volumes:
