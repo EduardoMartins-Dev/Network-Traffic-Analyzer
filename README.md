@@ -561,7 +561,7 @@ Limites da fase 1: só arquivo (socket Unix não implementado); sem persistênci
 | `AGENT_BATCH_TIMEOUT_MS` | `100` | Flush do batch mesmo sem atingir `AGENT_BATCH_SIZE` |
 | `AGENT_METRICS_INTERVAL_SEC` | `10` | Intervalo de publicação da thread de métricas |
 | `AGENT_RULES_FILE` | _(nenhum)_ | Arquivo JSON com os limiares dos detectores. Sem ele, valem os padrões do código |
-| `AGENT_HOME_NETS` | _(auto)_ | CIDRs do HOME_NET separados por vírgula ou espaço (até 8 IPv4 e 8 IPv6). Se definida, substitui a detecção automática pelas interfaces e a loopback não entra. Entradas inválidas são ignoradas |
+| `AGENT_HOME_NETS` | _(auto)_ | CIDRs do HOME_NET separados por vírgula ou espaço (até 8 IPv4 e 8 IPv6). Se definida, substitui a detecção automática (rede da interface capturada) e a loopback não entra. Entradas inválidas são ignoradas |
 
 ### Limiares dos detectores (`AGENT_RULES_FILE`)
 
