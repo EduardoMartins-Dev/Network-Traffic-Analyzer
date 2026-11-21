@@ -10,6 +10,8 @@
 #include "replay.h"
 #include "config.h"
 #include "service.h"
+#include "analyzer.h"
+#include "rules.h"
 
 /* ========================================================================= *
  * VERIFICAÇÃO DE PRIVILÉGIOS (Multiplataforma)                              *
@@ -112,6 +114,22 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 #endif
+
+    /* AGENT_RULES_FILE: limiares dos detectores (B18 fase 1). Sem a variável
+     * valem os padrões do código. Arquivo inválido aborta antes de captura ou
+     * replay: o agente nunca roda com configuração parcial. */
+    const char *rules_file = getenv("AGENT_RULES_FILE");
+    if (rules_file && *rules_file) {
+        NtaRules rules;
+        char     rules_err[256];
+        if (rules_load_file(rules_file, &rules, rules_err, sizeof(rules_err)) != 0) {
+            fprintf(stderr, "Erro: regras de detecção inválidas em %s: %s\n",
+                    rules_file, rules_err);
+            return 1;
+        }
+        analyzer_set_rules(&rules);
+        fprintf(stderr, "[RULES] limiares carregados de %s\n", rules_file);
+    }
 
     /* ------------------------------------------------------------------- *
      * MODO LIVE — pipeline multi-thread (v5.0)                             *

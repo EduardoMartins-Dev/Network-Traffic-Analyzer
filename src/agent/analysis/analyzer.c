@@ -165,19 +165,13 @@ static int is_home_addr(const NtaAddr *a) {
 #define INACTIVE_TIMEOUT    300
 #define MAX_ARP_ENTRIES     256
 
-/* Thresholds de fallback — usados apenas durante calibração EWMA             *
- * (< EWMA_CALIBRATION amostras). Após calibração, substituídos por          *
- * thresholds adaptativos calculados a partir do baseline de cada IP.        */
-#define SCAN_THRESHOLD      15
-#define ICMP_THRESHOLD      20
-#define SYN_FLOOD_THRESHOLD 100
-#define STEALTH_THRESHOLD   3
-#define BRUTE_THRESHOLD     30
-#define BRUTE_WINDOW_SEC    60
-#define DNS_SUBDOMAIN_LEN   50
-#define DNS_ENTROPY_THRESH  3.5
-#define DNS_SUSPICIOUS_MAX  10
-#define AMPLIFICATION_RATIO 10
+/* Limiares, janelas e alfas dos detectores (B18 fase 1): estão em g_rules, com
+ * os padrões de rules.h. Sem AGENT_RULES_FILE valem os padrões. Só muda por
+ * analyzer_set_rules(), antes da análise começar.
+ *
+ * Thresholds de fallback (ICMP, SYN): usados apenas durante calibração EWMA
+ * (< ewma_calibration amostras). Após calibração, são adaptativos. */
+static NtaRules g_rules = NTA_RULES_DEFAULT;
 
 /* Portas-alvo de brute force */
 #define PORT_SSH  22
@@ -198,12 +192,6 @@ static int is_home_addr(const NtaAddr *a) {
  * Detecção de anomalia: |valor - ewma| > EWMA_SIGMA * stddev                *
  * Elimina thresholds hardcoded — cada rede aprende seus próprios limites.   *
  * ========================================================================= */
-
-#define EWMA_ALPHA_FAST   0.3    /* alpha durante calibração */
-#define EWMA_ALPHA_SLOW   0.1    /* alpha após calibração */
-#define EWMA_CALIBRATION  100    /* amostras para completar calibração */
-#define EWMA_SIGMA        3.0    /* desvios-padrão para threshold adaptativo */
-#define EWMA_WINDOW_SEC   60     /* janela de 1 minuto para agregar métricas */
 
 typedef struct {
     double ewma_pps;          /* pacotes/segundo — média EWMA */
@@ -233,7 +221,6 @@ typedef struct {
  * Janela de correlação: 30 minutos (reset se inativo)                       *
  * ========================================================================= */
 
-#define KC_WINDOW_SEC  1800   /* 30 minutos para correlacionar estágios */
 #define KC_MITRE_SIZE  128
 
 typedef enum {
@@ -257,7 +244,7 @@ typedef struct {
     time_t   last_seen;
 
     /* Port Scan (v2.0) */
-    uint16_t ports[SCAN_THRESHOLD];
+    uint16_t ports[NTA_RULES_SCAN_MAX];   /* teto do scan_threshold (rules.h) */
     int      port_count;
 
     /* ICMP Flood (v2.0) */
@@ -367,16 +354,16 @@ static void update_baseline(ip_baseline_t *b, int new_port, int is_dns, time_t n
     if (is_dns)   b->dns_in_window++;
 
     double elapsed = difftime(now, b->window_start);
-    if (elapsed < EWMA_WINDOW_SEC) return;
+    if (elapsed < g_rules.ewma_window_sec) return;
 
     /* Calcula métricas da janela que acabou */
     double pps   = (elapsed > 0) ? ((double)b->pkt_in_window / elapsed) : 0.0;
     double ports = (double)b->ports_in_window;
     double dns   = (double)b->dns_in_window;
 
-    double alpha = (b->sample_count < EWMA_CALIBRATION)
-                   ? EWMA_ALPHA_FAST
-                   : EWMA_ALPHA_SLOW;
+    double alpha = (b->sample_count < g_rules.ewma_calibration)
+                   ? g_rules.ewma_alpha_fast
+                   : g_rules.ewma_alpha_slow;
 
     if (b->sample_count == 0) {
         /* Primeira amostra: inicializa com o valor observado */
@@ -411,13 +398,13 @@ static void update_baseline(ip_baseline_t *b, int new_port, int is_dns, time_t n
 /**
  * @brief Retorna 1 se o valor observado é uma anomalia em relação ao baseline.
  *
- * Condição: |observed - ewma| > EWMA_SIGMA * stddev
+ * Condição: |observed - ewma| > ewma_sigma * stddev
  * Durante calibração (variância = 0), não sinaliza anomalia.
  */
 static int is_anomaly(double observed, double ewma, double variance) {
     if (variance <= 0.0) return 0;
     double stddev = sqrt(variance);
-    return fabs(observed - ewma) > EWMA_SIGMA * stddev;
+    return fabs(observed - ewma) > g_rules.ewma_sigma * stddev;
 }
 
 /* ========================================================================= *
@@ -501,7 +488,7 @@ static void advance_kill_chain(Suspect *s, const char *attack, time_t now) {
 
     /* Reset se a janela de correlação expirou */
     if (s->kc_stage > KC_IDLE &&
-        difftime(now, s->kc_stage_entered) > KC_WINDOW_SEC) {
+        difftime(now, s->kc_stage_entered) > g_rules.kc_window_sec) {
         s->kc_stage         = KC_IDLE;
         s->kc_stages_hit    = 0;
         s->kc_first_seen    = 0;
@@ -540,6 +527,10 @@ static void advance_kill_chain(Suspect *s, const char *attack, time_t now) {
 /* ========================================================================= *
  * FUNÇÕES AUXILIARES                                                        *
  * ========================================================================= */
+
+void analyzer_set_rules(const NtaRules *r) {
+    if (r) g_rules = *r;
+}
 
 void analyzer_reset(void) {
     memset(suspects, 0, sizeof(suspects));
@@ -707,10 +698,10 @@ static const char *detect_syn_flood(Suspect *s, uint8_t tcp_flags) {
 
     s->syn_count++;
 
-    int threshold = SYN_FLOOD_THRESHOLD;
-    if (s->baseline.sample_count >= EWMA_CALIBRATION && s->baseline.ewma_var_pps > 0) {
+    int threshold = g_rules.syn_flood_threshold;
+    if (s->baseline.sample_count >= g_rules.ewma_calibration && s->baseline.ewma_var_pps > 0) {
         double stddev   = sqrt(s->baseline.ewma_var_pps);
-        double adaptive = s->baseline.ewma_pps + EWMA_SIGMA * stddev;
+        double adaptive = s->baseline.ewma_pps + g_rules.ewma_sigma * stddev;
         threshold = (int)(adaptive * 2.0);  /* burst SYN = 2x do pps normal */
         if (threshold < 10) threshold = 10;
     }
@@ -728,17 +719,17 @@ static const char *detect_syn_flood(Suspect *s, uint8_t tcp_flags) {
 static const char *detect_stealth_scan(Suspect *s, uint8_t tcp_flags) {
     if (tcp_flags == 0) {
         s->null_scan_count++;
-        if (s->null_scan_count >= STEALTH_THRESHOLD) return "NULL_SCAN";
+        if (s->null_scan_count >= g_rules.stealth_threshold) return "NULL_SCAN";
     }
 
     if ((tcp_flags & (NTA_TH_FIN | NTA_TH_PUSH | NTA_TH_URG)) == (NTA_TH_FIN | NTA_TH_PUSH | NTA_TH_URG)) {
         s->xmas_scan_count++;
-        if (s->xmas_scan_count >= STEALTH_THRESHOLD) return "XMAS_SCAN";
+        if (s->xmas_scan_count >= g_rules.stealth_threshold) return "XMAS_SCAN";
     }
 
     if ((tcp_flags & (NTA_TH_SYN | NTA_TH_FIN)) == (NTA_TH_SYN | NTA_TH_FIN)) {
         s->synfin_scan_count++;
-        if (s->synfin_scan_count >= STEALTH_THRESHOLD) return "SYNFIN_SCAN";
+        if (s->synfin_scan_count >= g_rules.stealth_threshold) return "SYNFIN_SCAN";
     }
 
     return NULL;
@@ -755,13 +746,13 @@ static const char *detect_brute_force(Suspect *s, uint8_t tcp_flags, uint16_t ds
     if (!(tcp_flags & NTA_TH_SYN) || (tcp_flags & NTA_TH_ACK)) return NULL;
     if (dst_port != PORT_SSH && dst_port != PORT_FTP && dst_port != PORT_RDP) return NULL;
 
-    if (difftime(now, s->brute_window_start) > BRUTE_WINDOW_SEC) {
+    if (difftime(now, s->brute_window_start) > g_rules.brute_window_sec) {
         s->brute_count        = 0;
         s->brute_window_start = now;
     }
 
     s->brute_count++;
-    return (s->brute_count >= BRUTE_THRESHOLD) ? "BRUTE_FORCE" : NULL;
+    return (s->brute_count >= g_rules.brute_threshold) ? "BRUTE_FORCE" : NULL;
 }
 
 /**
@@ -784,13 +775,13 @@ static const char *detect_dns_tunnel(Suspect *s, const unsigned char *dns_payloa
 
     int suspicious = 0;
 
-    if (first_label_len > DNS_SUBDOMAIN_LEN) suspicious = 1;
+    if (first_label_len > g_rules.dns_subdomain_len) suspicious = 1;
 
-    if (calculate_entropy((const unsigned char *)domain, name_len) > DNS_ENTROPY_THRESH)
+    if (calculate_entropy((const unsigned char *)domain, name_len) > g_rules.dns_entropy_thresh)
         suspicious = 1;
 
     /* Anomalia de baseline: volume de DNS muito acima do normal para este IP */
-    if (!suspicious && s->baseline.sample_count >= EWMA_CALIBRATION) {
+    if (!suspicious && s->baseline.sample_count >= g_rules.ewma_calibration) {
         if (is_anomaly((double)s->dns_query_count,
                        s->baseline.ewma_dns,
                        s->baseline.ewma_var_dns))
@@ -799,7 +790,7 @@ static const char *detect_dns_tunnel(Suspect *s, const unsigned char *dns_payloa
 
     if (suspicious) {
         s->dns_suspicious_count++;
-        if (s->dns_suspicious_count >= DNS_SUSPICIOUS_MAX) return "DNS_TUNNEL";
+        if (s->dns_suspicious_count >= g_rules.dns_suspicious_max) return "DNS_TUNNEL";
     }
 
     return NULL;
@@ -810,7 +801,7 @@ static const char *detect_dns_tunnel(Suspect *s, const unsigned char *dns_payloa
  */
 static const char *amplification_ratio(uint64_t req, uint64_t resp) {
     if (req < 100) return NULL;
-    return (resp > req * AMPLIFICATION_RATIO) ? "AMPLIFICATION" : NULL;
+    return (resp > req * (uint64_t)g_rules.amplification_ratio) ? "AMPLIFICATION" : NULL;
 }
 
 /**
@@ -892,10 +883,12 @@ static const char *detect_port_scan(Suspect *s, uint16_t dst_port) {
         if (s->ports[j] == dst_port) return NULL;  /* porta já vista */
     }
 
-    if (s->port_count < SCAN_THRESHOLD)
+    /* A capacidade do array é o teto mesmo que o limiar passe dele (defesa
+     * contra struct de regras não validada em analyzer_set_rules). */
+    if (s->port_count < g_rules.scan_threshold && s->port_count < NTA_RULES_SCAN_MAX)
         s->ports[s->port_count++] = dst_port;
 
-    return (s->port_count >= SCAN_THRESHOLD) ? "PORT_SCAN" : NULL;
+    return (s->port_count >= g_rules.scan_threshold) ? "PORT_SCAN" : NULL;
 }
 
 /**
@@ -906,10 +899,10 @@ static const char *detect_port_scan(Suspect *s, uint16_t dst_port) {
 static const char *detect_icmp_flood(Suspect *s) {
     s->icmp_count++;
 
-    int threshold = ICMP_THRESHOLD;
-    if (s->baseline.sample_count >= EWMA_CALIBRATION && s->baseline.ewma_var_pps > 0) {
+    int threshold = g_rules.icmp_threshold;
+    if (s->baseline.sample_count >= g_rules.ewma_calibration && s->baseline.ewma_var_pps > 0) {
         double stddev   = sqrt(s->baseline.ewma_var_pps);
-        double adaptive = s->baseline.ewma_pps + EWMA_SIGMA * stddev;
+        double adaptive = s->baseline.ewma_pps + g_rules.ewma_sigma * stddev;
         threshold = (int)(adaptive * 1.5);
         if (threshold < 5) threshold = 5;
     }
