@@ -295,6 +295,8 @@ Acesso (credenciais do `.env`; defaults de desenvolvimento entre parênteses):
 > `rabbitmq_data/` e `influxdb_data/` vazios). Em instalação existente, altere
 > pelos próprios serviços ou recrie os volumes.
 
+Exportação de alertas para SIEM (CEF ou ECS via syslog) é opcional e vem desligada: defina `NTA_EXPORT_FORMAT` no `.env` (variáveis e exemplo em [`deploy/nta-export.env.example`](deploy/nta-export.env.example)).
+
 #### Agentes: credenciais no RabbitMQ
 
 Um agente no mesmo host pode usar `AGENT_ID`/`AGENT_TOKEN` = `RABBITMQ_USER`/`RABBITMQ_PASS`.
