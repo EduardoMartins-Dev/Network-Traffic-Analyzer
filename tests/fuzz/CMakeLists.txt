@@ -16,6 +16,9 @@
 #   mkdir corpus-rules && cp deploy/rules/*.json corpus-rules/
 #   ./build-fuzz/fuzz_rules corpus-rules -max_total_time=120 -max_len=16384
 #   ./build-fuzz/fuzz_rules_replay <arquivos>             (qualquer compilador)
+#
+# Parser do log de DNS (B16, dns_log.c): fuzz_dns_log (clang) e fuzz_dns_log_replay.
+#   ./build-fuzz/fuzz_dns_log corpus-dns -max_total_time=60 -max_len=4096
 cmake_minimum_required(VERSION 3.13)
 project(NtaFuzz C)
 
@@ -106,4 +109,28 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang")
     target_compile_options(fuzz_eve PRIVATE -fsanitize=fuzzer ${FUZZ_SAN_FLAGS})
     target_link_options(fuzz_eve PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_libraries(fuzz_eve PRIVATE m)
+endif()
+
+# B16 (PR a): parser do log de DNS (dns_log.c + ringbuf.c). Mesmo esquema:
+# fuzz_dns_log_replay (driver, qualquer compilador com ASan/UBSan) e fuzz_dns_log
+# (libFuzzer, só clang).
+set(DNSLOG_SRC
+        ${NTA_ROOT}/src/agent/analysis/protocols/dns_log.c
+        ${NTA_ROOT}/src/agent/core/ringbuf.c)
+set(DNSLOG_INC ${FUZZ_INC})
+
+add_executable(fuzz_dns_log_replay replay_main.c fuzz_dns_log.c ${DNSLOG_SRC})
+target_include_directories(fuzz_dns_log_replay PRIVATE ${DNSLOG_INC})
+target_compile_definitions(fuzz_dns_log_replay PRIVATE ${FUZZ_DEFS})
+target_compile_options(fuzz_dns_log_replay PRIVATE ${FUZZ_SAN_FLAGS})
+target_link_options(fuzz_dns_log_replay PRIVATE -fsanitize=address,undefined)
+target_link_libraries(fuzz_dns_log_replay PRIVATE ${FUZZ_LIBS})
+
+if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    add_executable(fuzz_dns_log fuzz_dns_log.c ${DNSLOG_SRC})
+    target_include_directories(fuzz_dns_log PRIVATE ${DNSLOG_INC})
+    target_compile_definitions(fuzz_dns_log PRIVATE ${FUZZ_DEFS})
+    target_compile_options(fuzz_dns_log PRIVATE -fsanitize=fuzzer ${FUZZ_SAN_FLAGS})
+    target_link_options(fuzz_dns_log PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_libraries(fuzz_dns_log PRIVATE ${FUZZ_LIBS})
 endif()

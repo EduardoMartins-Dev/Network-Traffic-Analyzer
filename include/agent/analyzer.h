@@ -27,6 +27,11 @@ void analyzer_get_stats(analyzer_stats_t *out);
  * assim janelas (brute force, EWMA, kill chain) valem também no replay. */
 int analyze_packet(const u_char *packet, int length, time_t now);
 
+/* Igual a analyze_packet, com o instante do pacote em ms desde a época (B16: o
+ * log de DNS grava ts em ms). Usada pelo pipeline e pelo replay; analyze_packet
+ * é o atalho que usa segundos * 1000. */
+int analyze_packet_ms(const u_char *packet, int length, time_t now, int64_t ts_ms);
+
 /* Zera suspeitos e tabela ARP (HOME_NET é mantido). Usado entre pcaps do
  * replay para que um arquivo não herde contadores do anterior. */
 void analyzer_reset(void);
