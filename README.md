@@ -16,7 +16,7 @@ O **Network Traffic Analyzer** é um sistema de monitoramento e detecção de in
 
 Cada agente roda em um host monitorado, captura pacotes via libpcap/Npcap, detecta ataques comportamentalmente com **baseline EWMA adaptativo** e **kill chain correlator**, e envia os eventos enriquecidos com tags MITRE ATT&CK para um servidor central via AMQP.
 
-A v7.0 substitui o ingestor Python por um servidor em C (`nta-server`) com pool de workers adaptativo (auto-scale via Mgmt API), narrativa LLM em C (libcurl→Groq) e métricas próprias (`nta_pool`, `incident_narrative`).
+O `nta-server` é um servidor em C (v7.0) que substituiu o ingestor Python da v6.0, com pool de workers adaptativo (auto-scale via Mgmt API), narrativa LLM em C (libcurl→Groq) e métricas próprias (`nta_pool`, `incident_narrative`).
 
 ---
 
@@ -169,7 +169,7 @@ Network-Traffic-Analyzer/
 ├── third_party/cjson/        # cJSON (vendored)
 ├── tests/
 │   ├── unit/                 # testes unitários (ctest)
-│   ├── pcaps/                # 14 PCAPs sintéticos + gabaritos (gen_pcaps.py)
+│   ├── pcaps/                # 33 PCAPs sintéticos + gabaritos (gen_pcaps.py)
 │   ├── fuzz/                 # harness libFuzzer do parser
 │   └── bench/                # benchmark de throughput pps (opcional)
 ├── installer/                # instalador Windows (Inno Setup)
@@ -391,7 +391,7 @@ suportado — o pipeline usa atômicos C11, ainda experimentais no MSVC.
 pacman -S --needed mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,rabbitmq-c}
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNPCAP_SDK_DIR="C:/Npcap-sdk"
 cmake --build build
-./build/NetworkTrafficAnalyzer.exe --replay-dir tests/pcaps   # valida: 12/12 (14 pcaps; 2 sem gabarito)
+./build/NetworkTrafficAnalyzer.exe --replay-dir tests/pcaps   # valida: Score agregado 100.0% (26/26); 33 pcaps, 7 com gabarito vazio
 ./build/NetworkTrafficAnalyzer.exe --list-interfaces          # \Device\NPF_{GUID}
 ```
 
@@ -464,7 +464,7 @@ Não requer privilégio nem RabbitMQ em execução.
   --report tests/report.json
 ```
 
-> `tests/pcaps/` tem 14 `.pcap` sintéticos e determinísticos, cada um com gabarito `.json`. Doze têm detecções esperadas; `malformed` e `dns-normal` têm gabarito vazio (`expected: []`) e o replay deles deve reportar `Detecções capturadas: 0`. Os arquivos são gerados por `tests/pcaps/gen_pcaps.py`. Para tráfego real, consulte [tests/pcaps/README.md](tests/pcaps/README.md).
+> `tests/pcaps/` tem 33 `.pcap` sintéticos e determinísticos, cada um com gabarito `.json`. 26 têm detecções esperadas. Os outros 7 têm gabarito vazio (`expected: []`): `malformed`, `dns-normal`, `vlan-malformado`, `frag-ipv4-nao-inicial`, `frag-ipv4-tiny`, `ipv6-benign` e `ipv6-malformed`. Com `--replay` de arquivo único, um gabarito vazio sai com rc 0 se não houver alerta e com rc 1 se houver; `--replay-dir` deixa esses arquivos fora do score agregado. Os arquivos são gerados por `tests/pcaps/gen_pcaps.py`. Para tráfego real, consulte [tests/pcaps/README.md](tests/pcaps/README.md).
 
 Saída esperada:
 
@@ -487,6 +487,24 @@ interface real):
 ./scripts/smoke-test.sh                      # build + replay
 sudo ./scripts/smoke-test.sh --live eth0     # adiciona 10s de captura
 ```
+
+---
+
+## Exportação SIEM (B11)
+
+O `nta-server` pode enviar **alertas** a um SIEM por syslog RFC 5424, em CEF (v0) ou ECS 8.11.0. Desligado por padrão. Só vira alerta o evento com `attack_type` não vazio e diferente de `NONE`. OCSF não está implementado.
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `NTA_EXPORT_FORMAT` | _(vazio = desligado)_ | `cef` ou `ecs` |
+| `NTA_EXPORT_SYSLOG_HOST` | _(nenhum)_ | Destino do syslog. Obrigatória quando o export está ligado |
+| `NTA_EXPORT_SYSLOG_PORT` | `514` | Porta do destino (1 a 65535) |
+| `NTA_EXPORT_SYSLOG_PROTO` | `udp` | `udp` (RFC 5426) ou `tcp` (octet-counting, RFC 6587) |
+| `NTA_EXPORT_HOSTNAME` | `nta-server` | HOSTNAME do cabeçalho RFC 5424 |
+| `NTA_EXPORT_QUEUE` | `1024` | Tamanho da fila entre o consumer e a thread de envio (16 a 65536). Fila cheia descarta e conta |
+| `NTA_EXPORT_TIMEOUT_MS` | `500` | Timeout de conexão e de envio (50 a 10000) |
+
+Falha no destino não bloqueia o consumo da fila: a exportação tem thread própria e descarta e conta o que não cabe. O `docker-compose.yml` ainda não repassa essas variáveis ao serviço `nta-server`.
 
 ---
 
@@ -847,6 +865,8 @@ O workflow `.github/workflows/test-ids.yml` roda em push para `main` e `V4.0` e 
 4. Fuzzing do parser (job `fuzz-smoke`, libFuzzer + ASan/UBSan, 120 s sobre os frames dos pcaps): **não bloqueante**; crashes vão ao artefato `fuzz-parser-artifacts`
 5. Windows (MSYS2): compila o `.exe` estático, roda os testes unitários nativamente e compila o instalador
 6. Imagem Docker do `nta-server`: build + smoke do `/health`
+7. macOS (`agent-macos`, Homebrew): build, testes unitários e replay-dir; bloqueante
+8. FreeBSD (`agent-freebsd`, VM FreeBSD 14.5): mesmo passo, mas **não bloqueante** (`continue-on-error`) por dois bugs de portabilidade conhecidos (`link_directories` depois de `add_executable` no `CMakeLists.txt`; `AF_INET`/`AF_INET6` sem `<sys/socket.h>` em `nta_ioc.c`). A correção está em outro PR; até entrar, o job segue vermelho sem bloquear o merge
 
 Fora do `ctest` e do CI: `python3 scripts/test_mitre_layer.py` (stdlib) testa a camada ATT&CK, e o benchmark `tests/bench/` só compila com `-DNTA_BUILD_BENCH=ON`.
 
