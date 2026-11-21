@@ -152,25 +152,29 @@ Network-Traffic-Analyzer/
 │   │   ├── pipeline.h        #   pipeline multi-thread (4 threads)
 │   │   ├── publisher.h       #   cliente AMQP com reconexão
 │   │   ├── replay.h          #   replay de .pcap + gabaritos
+│   │   ├── rules.h           #   limiares dos detectores (AGENT_RULES_FILE)
 │   │   ├── ringbuf.h         #   ring buffer SPSC lock-free
 │   │   └── service.h         #   Windows Service (NTAAgent)
+│   ├── bridge/               # Headers do nta-eve-bridge (eve_*.h)
 │   └── server/               # Headers do nta-server (nta_*.h)
 ├── src/
 │   ├── agent/
 │   │   ├── main.c / cli.c    # entrada e linha de comando
-│   │   ├── analysis/         # analyzer.c (10 detectores) + collector.c
+│   │   ├── analysis/         # analyzer.c (10 detectores), rules.c (limiares) + collector.c
 │   │   ├── capture/          # capture.c
 │   │   ├── core/             # pipeline.c, ringbuf.c, config.c
 │   │   ├── output/           # publisher.c (batch AMQP + métricas)
 │   │   ├── platform/         # netif_posix.c, netif_win32.c, service_win32.c
 │   │   └── replay/           # replay.c (--replay / --replay-dir)
+│   ├── bridge/               # nta-eve-bridge: ponte do eve.json do Suricata (POSIX)
 │   └── server/               # nta-server: consumer AMQP, InfluxDB, GeoIP, IoC,
 │                             #   AbuseIPDB, WHOIS, narrator Groq, scaler, /health
 ├── third_party/cjson/        # cJSON (vendored)
 ├── tests/
 │   ├── unit/                 # testes unitários (ctest)
+│   ├── eve/                  # EVE de exemplo e golden do --dry-run da ponte
 │   ├── pcaps/                # 33 PCAPs sintéticos + gabaritos (gen_pcaps.py)
-│   ├── fuzz/                 # harness libFuzzer do parser
+│   ├── fuzz/                 # harness libFuzzer do parser, do carregador de limiares e da ponte
 │   └── bench/                # benchmark de throughput pps (opcional)
 ├── installer/                # instalador Windows (Inno Setup)
 ├── scripts/
@@ -189,6 +193,9 @@ Network-Traffic-Analyzer/
 │   ├── nta-server.Dockerfile # imagem do nta-server (usada pelo compose)
 │   ├── agent.env.example     # config do agente (--config / systemd / serviço Windows)
 │   ├── agent.service         # unit systemd do agente (Linux)
+│   ├── eve-bridge.env.example # config da ponte EVE do Suricata (B17)
+│   ├── eve-bridge.mapping.json # categoria -> estágio e severidade -> score da ponte
+│   ├── rules/                # limiares.example.json e README (AGENT_RULES_FILE)
 │   ├── ioc/                  # blocklist.json.example e README.md (feeds e recarga)
 │   ├── rabbitmq/             # rabbitmq.conf (TLS/mTLS) + plugins
 │   └── secrets/              # *.env.example (Groq, AbuseIPDB); certs gerados
@@ -532,6 +539,8 @@ Categorias fracas (`RECON`) têm teto de score 40, abaixo do `NARRATOR_MIN_SCORE
 
 Ressalva: a doc oficial do Suricata não define a semântica de `direction`, e o exemplo oficial mostra `to_client` com o atacante em `src_ip`. Por isso o padrão é `src`.
 
+Limites da fase 1: só arquivo (socket Unix não implementado); sem persistência de offset, então um reinício começa no fim do arquivo; com `copytruncate` podem se perder linhas; acima de 1024 grupos abertos os alertas são descartados e contados, sem aviso no Grafana; o `nta-server` não grava `count`, então cada registro vira um ponto. Nenhum Suricata real foi usado: a validação é com o EVE de exemplo. Testes: `test_eve_bridge` e `test_eve_dryrun` (fora do Windows).
+
 ---
 
 ## Configuração do Agente (Variáveis de Ambiente)
@@ -551,6 +560,11 @@ Ressalva: a doc oficial do Suricata não define a semântica de `direction`, e o
 | `AGENT_BATCH_SIZE` | `50` | Eventos por publicação AMQP |
 | `AGENT_BATCH_TIMEOUT_MS` | `100` | Flush do batch mesmo sem atingir `AGENT_BATCH_SIZE` |
 | `AGENT_METRICS_INTERVAL_SEC` | `10` | Intervalo de publicação da thread de métricas |
+| `AGENT_RULES_FILE` | _(nenhum)_ | Arquivo JSON com os limiares dos detectores. Sem ele, valem os padrões do código |
+
+### Limiares dos detectores (`AGENT_RULES_FILE`)
+
+Os limiares, janelas e alfas dos detectores (por exemplo, o limite do port scan e a janela do brute force) podem ser ajustados por um arquivo JSON, sem recompilar. O arquivo é lido uma vez, na subida: para mudar, reinicie o agente. Arquivo inválido faz o agente sair com `rc 1` antes de capturar ou fazer replay. Chaves, faixas e exemplo estão em [`deploy/rules/README.md`](deploy/rules/README.md); modelo com os padrões em `deploy/rules/limiares.example.json`.
 
 ```bash
 # Exemplo — agente remoto com TLS
@@ -833,6 +847,8 @@ A partir da v5.0 o agente publica **lotes** (arrays) de eventos em uma única me
 ]
 ```
 
+A ponte EVE (`nta-eve-bridge`) usa o mesmo formato e acrescenta dois campos opcionais: `count` (alertas agregados no registro) e `signature_id` (id da assinatura do Suricata). O servidor não lê esses dois campos; `bytes` vem como 0 e `is_scan` como 1 nos registros da ponte.
+
 Mensagens de **métricas** (fila `traffic_metrics`):
 
 ```json
@@ -874,8 +890,16 @@ Em `tests/unit/` (harness próprio, sem dependências), rodados pelo `ctest`:
 | `test_ringbuf` | FIFO, overflow, wrap-around e estresse SPSC com 2 threads (2M itens) |
 | `test_config` | Parser do `--config`: BOM, CRLF, aspas, valor vazio, precedência do ambiente |
 | `test_analyzer` | Detecções com timestamps controlados: janela do brute force, progressão e score da kill chain, HOME_NET |
+| `test_rules` | Carregador de `AGENT_RULES_FILE`: padrões, faixas, tipo, chave desconhecida ou repetida, profundidade, tamanho e arquivo binário |
+| `test_rules_replay` | Um limiar alterado pelo arquivo muda o resultado do `--replay` de um pcap — só fora do Windows |
+| `test_eve_bridge` | Parser, tabela de mapeamento e agregação da ponte `nta-eve-bridge` (B17) — só fora do Windows |
+| `test_eve_dryrun` | `nta-eve-bridge --once --dry-run` sobre o EVE de exemplo, comparado com `tests/eve/expected-dryrun.json` — só fora do Windows |
 | `test_whois` | Parser WHOIS do nta-server (ARIN, RIPE, LACNIC, referral IANA) — só Linux |
 | `test_ioc` | Store do IoC do nta-server: parser IPv4/IPv6, rejeição de lista inválida na recarga, leitores × recarga em paralelo — só fora do Windows |
+| `test_ipclass` | Classificação de IP privado do nta-server (`nta_ip_is_private`), incluindo IPv6 — só fora do Windows |
+| `test_export` | Export SIEM do nta-server: render CEF e ECS, fila limitada, envio UDP e TCP para loopback — só fora do Windows |
+| `test_influx` | Formatação dos floats do line protocol do InfluxDB, com servidor HTTP de loopback. Precisa de `NTA_BUILD_SERVER` — só fora do Windows |
+| `test_replay_gabarito_vazio` | `--replay` com gabarito vazio sai com rc 0 sem alerta e rc 1 com alerta — só fora do Windows |
 
 ```bash
 cmake -S . -B build && cmake --build build
