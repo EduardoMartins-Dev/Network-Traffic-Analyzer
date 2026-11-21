@@ -561,6 +561,7 @@ Limites da fase 1: só arquivo (socket Unix não implementado); sem persistênci
 | `AGENT_BATCH_TIMEOUT_MS` | `100` | Flush do batch mesmo sem atingir `AGENT_BATCH_SIZE` |
 | `AGENT_METRICS_INTERVAL_SEC` | `10` | Intervalo de publicação da thread de métricas |
 | `AGENT_RULES_FILE` | _(nenhum)_ | Arquivo JSON com os limiares dos detectores. Sem ele, valem os padrões do código |
+| `AGENT_HOME_NETS` | _(auto)_ | CIDRs do HOME_NET separados por vírgula ou espaço (até 8 IPv4 e 8 IPv6). Se definida, substitui a detecção automática (rede da interface capturada) e a loopback não entra. Entradas inválidas são ignoradas |
 
 ### Limiares dos detectores (`AGENT_RULES_FILE`)
 
@@ -894,7 +895,7 @@ Em `tests/unit/` (harness próprio, sem dependências), rodados pelo `ctest`:
 | `test_rules_replay` | Um limiar alterado pelo arquivo muda o resultado do `--replay` de um pcap — só fora do Windows |
 | `test_eve_bridge` | Parser, tabela de mapeamento e agregação da ponte `nta-eve-bridge` (B17) — só fora do Windows |
 | `test_eve_dryrun` | `nta-eve-bridge --once --dry-run` sobre o EVE de exemplo, comparado com `tests/eve/expected-dryrun.json` — só fora do Windows |
-| `test_whois` | Parser WHOIS do nta-server (ARIN, RIPE, LACNIC, referral IANA) — só Linux |
+| `test_whois` | Parser WHOIS do nta-server (ARIN, RIPE, LACNIC, referral IANA) — só fora do Windows |
 | `test_ioc` | Store do IoC do nta-server: parser IPv4/IPv6, rejeição de lista inválida na recarga, leitores × recarga em paralelo — só fora do Windows |
 | `test_ipclass` | Classificação de IP privado do nta-server (`nta_ip_is_private`), incluindo IPv6 — só fora do Windows |
 | `test_export` | Export SIEM do nta-server: render CEF e ECS, fila limitada, envio UDP e TCP para loopback — só fora do Windows |
@@ -967,7 +968,7 @@ No docker-compose, URL vazia vira um placeholder `.invalid` (não resolve), ent�
 | v6.0 | AI Narrator (LLM via Groq) | ✅ migrado para C em v7.0 |
 | v7.0 | nta-server em C + narrator C (Groq) + pool adaptativo (Mgmt API) + retention 7d/90d + mTLS multi-agente | ✅ feature-complete · cluster RabbitMQ deferido p/ v10.0 |
 | v8.0 | Threat Intelligence (GeoLite2-City+ASN, IoC framework, AbuseIPDB + dual-trigger narrator, WHOIS nativo) | ✅ feature-complete |
-| pós-v8.1 (em `main`, sem tag) | Alertas Slack/Discord/ntfy opcionais; feeds IoC automáticos e recarga por SIGHUP; camada ATT&CK Navigator; detecção de refletor DNS (AMPLIFICATION); alerta de host offline; pcaps de cobertura; fuzzing e benchmark de pps | ✅ |
+| pós-v8.1 (em `main`, sem tag) | Alertas Slack/Discord/ntfy opcionais; feeds IoC automáticos e recarga por SIGHUP; camada ATT&CK Navigator; detecção de refletor DNS (AMPLIFICATION); alerta de host offline; pcaps de cobertura; fuzzing e benchmark de pps; IPv6 no agente e no servidor (B09, B33); VLAN/QinQ e fragmentação IPv4 no agente (B10); export SIEM CEF/ECS (B11); CI macOS e FreeBSD (B15); ponte EVE do Suricata, fase 1 (B17); limiares dos detectores em JSON, fase 1 (B18) | ✅ |
 | v9.0 | Alta Performance (AF_PACKET + TPACKET_V3 + zero-copy) | Planejado |
 | v10.0 | Produção: VPS + Terraform + Nginx + Let's Encrypt (deploy final) | Planejado |
 
