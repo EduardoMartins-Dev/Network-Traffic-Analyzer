@@ -27,7 +27,7 @@ typedef struct {
 } Gabarito;
 
 typedef struct {
-    const char *pcap_file;
+    char        pcap_file[512];  /* cópia do caminho: o buffer de quem chama é reutilizado */
     int         expected_count;
     int         passed;
     int         failed;

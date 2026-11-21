@@ -239,6 +239,14 @@ if(NTA_BUILD_TESTS)
             -DPCAP_DIR=${CMAKE_SOURCE_DIR}/tests/pcaps
             -DWORK_DIR=${CMAKE_BINARY_DIR}/replay_gabarito_vazio
             -P ${CMAKE_SOURCE_DIR}/tests/unit/replay_gabarito_vazio.cmake)
+
+        # --report do --replay-dir: um nome de pcap por entrada (antes todas
+        # apontavam para o último pcap, por ponteiro para buffer reutilizado).
+        add_test(NAME test_replay_report COMMAND ${CMAKE_COMMAND}
+            -DNTA_EXE=$<TARGET_FILE:NetworkTrafficAnalyzer>
+            -DPCAP_DIR=${CMAKE_SOURCE_DIR}/tests/pcaps
+            -DWORK_DIR=${CMAKE_BINARY_DIR}/replay_report
+            -P ${CMAKE_SOURCE_DIR}/tests/unit/replay_report.cmake)
     endif()
 endif()
 

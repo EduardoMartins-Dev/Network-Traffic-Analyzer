@@ -147,7 +147,7 @@ void compare_results(const Gabarito *g, ReplayResult *r) {
 }
 
 void print_replay_result(const ReplayResult *r) {
-    printf("\n--- Resultado: %s ---\n", r->pcap_file ? r->pcap_file : "N/A");
+    printf("\n--- Resultado: %s ---\n", r->pcap_file[0] ? r->pcap_file : "N/A");
     if (r->expected_count > 0) {
         printf("Score: %.1f%%  (%d/%d detecções corretas)\n",
                r->score, r->passed, r->expected_count);
@@ -168,7 +168,7 @@ void print_replay_result(const ReplayResult *r) {
 ReplayResult replay_file(const char *pcap_path, const Gabarito *g) {
     ReplayResult r;
     memset(&r, 0, sizeof(r));
-    r.pcap_file = pcap_path;
+    snprintf(r.pcap_file, sizeof(r.pcap_file), "%s", pcap_path);
 
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_t *handle = pcap_open_offline(pcap_path, errbuf);
