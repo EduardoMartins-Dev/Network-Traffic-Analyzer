@@ -313,6 +313,23 @@ int publisher_send_batch(const event_slot_t *batch, int count) {
 }
 
 /* ========================================================================= *
+ * JSON PRÉ-SERIALIZADO — usado pela ponte EVE (nta-eve-bridge, B17)          *
+ * Mesmas propriedades de publisher_send_batch; o agente não chama esta       *
+ * função, então o comportamento dele não muda.                              *
+ * ========================================================================= */
+int publisher_send_json(const char *json_array) {
+    if (!json_array || !*json_array) return 0;
+
+    amqp_basic_properties_t props;
+    props._flags        = AMQP_BASIC_CONTENT_TYPE_FLAG | AMQP_BASIC_DELIVERY_MODE_FLAG | AMQP_BASIC_USER_ID_FLAG;
+    props.content_type  = amqp_cstring_bytes("application/json");
+    props.delivery_mode = 2;  /* persistente */
+    props.user_id       = amqp_cstring_bytes(g_agent_id);
+
+    return publish_to(g_queue_name, &props, json_array);
+}
+
+/* ========================================================================= *
  * METRICS — publica num routing key separado                                *
  * ========================================================================= */
 int publisher_send_metrics(const char *json_payload) {

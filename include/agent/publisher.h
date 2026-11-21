@@ -28,6 +28,10 @@ void publish_packet(const char *src_ip, int port, const char *proto, int bytes,
  * o chamador mantém o lote e tenta de novo.                               */
 int publisher_send_batch(const event_slot_t *batch, int count);
 
+/* Publica um array JSON já serializado (ponte EVE, nta-eve-bridge). Mesmas   *
+ * propriedades do lote. Retorna -1 se o broker está fora (o chamador mantém). */
+int publisher_send_json(const char *json_array);
+
 /* Publica um JSON de métricas em routing key separada                     *
  * (AGENT_METRICS_QUEUE, default "traffic_metrics"). Thread-safe.          *
  * Retorna -1 se o broker está fora (métrica é descartável).              */
