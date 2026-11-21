@@ -1,4 +1,4 @@
-# PCAPs de Teste — NTA v4.1
+# PCAPs de Teste — NTA
 
 Os `.pcap` versionados aqui são **sintéticos e determinísticos**, gerados por
 `gen_pcaps.py` (só stdlib) com volume acima dos limiares do `analyzer.c`. São
@@ -32,6 +32,7 @@ Cada arquivo `.pcap` deve ter um gabarito `.json` com o mesmo nome:
 | amplification-reflector.pcap | amplification-reflector.json | AMPLIFICATION | 203.0.113.53 |
 | dns-exaustao.pcap  | dns-exaustao.json   | PORT_SCAN      | 192.168.1.100      |
 | dns-normal.pcap    | dns-normal.json     | (nenhum)       | vazio: 0 alertas   |
+| malformed.pcap     | malformed.json      | (nenhum)       | vazio: 0 alertas (robustez) |
 | ipv6-syn-flood.pcap | ipv6-syn-flood.json | SYN_FLOOD     | 2001:db8:a::100    |
 | ipv6-port-scan.pcap | ipv6-port-scan.json | PORT_SCAN     | 2001:db8:a::100    |
 | ipv6-null-scan.pcap | ipv6-null-scan.json | NULL_SCAN     | 2001:db8:a::100    |
@@ -91,10 +92,11 @@ Notas sobre os gabaritos novos:
   gerar alerta). Checksums de L4 são calculados, mas o analyzer não os verifica.
   ARP e NDP sobre IPv6 não têm pcap: NDP spoof está fora do escopo.
 - **Sem gabarito** (`dns-normal.pcap`): DNS proporcional (consulta de 71 B,
-  resposta de 128 B, ~1,7x). Não pode gerar nenhum alerta. O replay não
-  reprova detecção extra quando o gabarito é vazio, então a prova é a linha
-  `Detecções capturadas: 0` na saída do replay e o teste unitário
-  `test_dns_normal_nao_dispara`.
+  resposta de 128 B, ~1,7x). Não pode gerar nenhum alerta. Com
+  gabarito vazio, o `--replay-dir` deixa o arquivo fora do score agregado, e o
+  `--replay` de arquivo único sai com rc 0 sem alerta e com rc 1 se houver
+  alerta (PR #39). A prova é a linha `Detecções capturadas: 0` na saída do
+  replay e o teste unitário `test_dns_normal_nao_dispara`.
 
 ## Executar testes
 

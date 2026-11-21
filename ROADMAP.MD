@@ -268,19 +268,19 @@ MITRE ATT&CK: T1557, T1046, T1110, T1071.004, T1498
 
 > **Status (revisão 2026-11):** **✅ núcleo entregue** (commit `6aa9b97`). `nta-server` em C em `src/server/`: consumidor AMQP, InfluxDB, GeoIP, narrator em C, pool adaptativo (`nta_scaler.c`) e `/health` e `/metrics`. O ingestor Python foi removido. A retenção (hot 7d, warm 90d) está em `scripts/influx_retention.sh` e o mTLS multi-agente está no README.
 >
-> **Não entregue:** cluster RabbitMQ de 3 nós, deferido para a v10.0 (ver README); registro de agentes por API REST (o provisionamento é por `scripts/provision_agent.sh`); alerta de host offline (ainda não implementado).
+> **Não entregue:** cluster RabbitMQ de 3 nós, deferido para a v10.0 (ver README); registro de agentes por API REST (o provisionamento é por `scripts/provision_agent.sh`).
 
 > **Quando um único agente não é suficiente.** Preparar o sistema para operar com múltiplos agentes reportando para o mesmo servidor central, com capacidade de processamento que escala automaticamente.
 
 **`nta-server` — Servidor Central em C:**
 
-Binário C que substitui o ingestor Python. Responsável por:
+Binário C que consome a fila e substituiu o ingestor Python (já removido). Responsável por:
 * Consumir fila RabbitMQ (librabbitmq — mesma lib do agente)
 * Parsear eventos com cJSON (já no projeto)
 * Enriquecer com GeoIP offline via libmaxminddb (~1µs por lookup)
 * Gravar no InfluxDB via HTTP API (libcurl)
 * Chamar Groq API para narrativas (libcurl + cJSON, thread isolada)
-* **Dependência nova: apenas libcurl. Zero Python.**
+* **Dependências novas: libcurl (HTTP) e libmaxminddb (GeoIP). Zero Python no servidor.**
 
 **Arquitetura elástica (thread pool adaptativo):**
 
