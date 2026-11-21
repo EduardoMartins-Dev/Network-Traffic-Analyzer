@@ -13,6 +13,8 @@ Captura→Mensageria→Agent/Server→IDS Engine→Multi-Thr→DX+LLM-Tools→AI
 > **Nota de revisão 2026-05:** v6.0 implementado em **Python** (não em C como originalmente planejado). Decisão: priorizar tempo-de-feature; reescrita em C fica para v7.0 quando o `nta-server` for o único consumidor da fila. v5.5 inserida como camada de DX e ferramentas LLM auxiliares.
 >
 > **Nota de revisão 2026-05-12:** v7.0 entregue (commit `6aa9b97`). v8.0 (Threat Intelligence) entregue em 4 milestones: GeoLite2-ASN, IoC framework, AbuseIPDB enricher + dual-trigger narrator, WHOIS nativo. M2 (cache TTL genérico) skip — cada módulo inline a própria hashtable, refactor pra módulo comum só se M de v9+ exigir.
+>
+> **Nota de revisão 2026-11-21:** em `main`, sem tag, duas entregas de fase 1. **Ponte EVE do Suricata** (`nta-eve-bridge`, PR #47): lê o `eve.json` e publica na `traffic_queue`; só POSIX; validada só com EVE de exemplo, sem Suricata real. **Limiares dos detectores em JSON** (`AGENT_RULES_FILE`, PR #48): ajusta limiares, janelas e alfas dos detectores existentes, sem regras novas e sem recarga por SIGHUP. Fases seguintes pendentes: na ponte, persistência de offset e socket Unix; nos limiares, regras novas e recarga por sinal.
 
 ---
 

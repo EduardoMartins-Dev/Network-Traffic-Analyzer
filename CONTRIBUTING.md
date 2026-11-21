@@ -110,6 +110,7 @@ Passos detalhados em [README.md § Instalação](./README.md#instalação).
 | Quer | Veja |
 |------|------|
 | Adicionar novo detector de ataque | `src/agent/analysis/analyzer.c` + testes em `tests/pcaps/` |
+| Mudar um limiar de detector | `include/agent/rules.h` (padrões e faixas) e `deploy/rules/README.md` (`AGENT_RULES_FILE`) |
 | Adicionar enricher de threat-intel | espelhe `src/server/nta_abuse.c` (cache + libcurl) |
 | Melhorar dashboards | `grafana/dashboards/*.json` |
 | Corrigir bug | abra issue antes se o comportamento não for óbvio |

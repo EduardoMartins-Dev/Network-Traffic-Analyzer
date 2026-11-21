@@ -1,7 +1,7 @@
 # PCAPs de Teste — NTA
 
 Os `.pcap` versionados aqui são **sintéticos e determinísticos**, gerados por
-`gen_pcaps.py` (só stdlib) com volume acima dos limiares do `analyzer.c`. São
+`gen_pcaps.py` (só stdlib) com volume acima dos limiares padrão de `include/agent/rules.h`. São
 eles que o CI (`.github/workflows/test-ids.yml`) roda a cada push/PR:
 
 ```bash
