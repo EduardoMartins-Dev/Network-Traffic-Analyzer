@@ -506,7 +506,7 @@ O `nta-server` pode enviar **alertas** a um SIEM por syslog RFC 5424, em CEF (v0
 | `NTA_EXPORT_QUEUE` | `1024` | Tamanho da fila entre o consumer e a thread de envio (16 a 65536). Fila cheia descarta e conta |
 | `NTA_EXPORT_TIMEOUT_MS` | `500` | Timeout de conexão e de envio (50 a 10000) |
 
-Falha no destino não bloqueia o consumo da fila: a exportação tem thread própria e descarta e conta o que não cabe. O `docker-compose.yml` ainda não repassa essas variáveis ao serviço `nta-server`.
+Falha no destino não bloqueia o consumo da fila: a exportação tem thread própria e descarta e conta o que não cabe. O `docker-compose.yml` repassa essas variáveis ao serviço `nta-server` (valor vazio = desligado). Modelo comentado: `deploy/nta-export.env.example`.
 
 ---
 
@@ -868,7 +868,7 @@ O workflow `.github/workflows/test-ids.yml` roda em push para `main` e `V4.0` e 
 5. Windows (MSYS2): compila o `.exe` estático, roda os testes unitários nativamente e compila o instalador
 6. Imagem Docker do `nta-server`: build + smoke do `/health`
 7. macOS (`agent-macos`, Homebrew): build, testes unitários e replay-dir; bloqueante
-8. FreeBSD (`agent-freebsd`, VM FreeBSD 14.5): mesmo passo, mas **não bloqueante** (`continue-on-error`) por dois bugs de portabilidade conhecidos (`link_directories` depois de `add_executable` no `CMakeLists.txt`; `AF_INET`/`AF_INET6` sem `<sys/socket.h>` em `nta_ioc.c`). A correção está em outro PR; até entrar, o job segue vermelho sem bloquear o merge
+8. FreeBSD (`agent-freebsd`, VM FreeBSD 14.5): mesmo passo, **bloqueante**. Antes tinha `continue-on-error` por dois bugs de portabilidade (`link_directories` depois de `add_executable` no `CMakeLists.txt`; `AF_INET`/`AF_INET6` sem `<sys/socket.h>` em `nta_ioc.c`), corrigidos no PR #44
 
 Fora do `ctest` e do CI: `python3 scripts/test_mitre_layer.py` (stdlib) testa a camada ATT&CK, e o benchmark `tests/bench/` só compila com `-DNTA_BUILD_BENCH=ON`.
 
